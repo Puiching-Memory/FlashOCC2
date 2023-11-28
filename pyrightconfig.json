@@ -1,0 +1,9 @@
+{
+    "exclude": [
+      "data/",
+      "work_dirs/",
+      "ckpt/",
+      "docs/",
+      "figs/"
+    ]
+  }

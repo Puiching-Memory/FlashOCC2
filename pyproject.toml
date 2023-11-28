@@ -1,0 +1,71 @@
+[project]
+name = "flashocc2"
+version = "1.0.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+]
+
+[project.optional-dependencies]
+cpu = [
+  "torch>=2.5.1,<2.6.0",
+  "torchvision>=0.20.1",
+  "nuscenes-devkit",
+  "mmdet3d",
+  "mmcv",
+  "mmdet",
+  "mmengine",
+  "mmsegmentation",
+  "flashocc2-lib",
+]
+cu121 = [
+  "torch>=2.5.1,<2.6.0",
+  "torchvision>=0.20.1",
+  "nuscenes-devkit",
+  "mmdet3d",
+  "mmcv",
+  "mmdet",
+  "mmengine",
+  "mmsegmentation",
+  "flashocc2-lib",
+]
+
+[tool.uv]
+conflicts = [
+  [
+    { extra = "cpu" },
+    { extra = "cu121" },
+  ],
+]
+index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+environments = [
+    "sys_platform == 'linux'",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu121", extra = "cu121" },
+]
+torchvision = [
+  { index = "pytorch-cpu", extra = "cpu"},
+  { index = "pytorch-cu121", extra = "cu121" },
+]
+nuscenes-devkit = { path = "./nuscenes-devkit/setup", editable = false }
+mmdet3d = { path = "./mmdetection3d", editable = false }
+mmcv = { path = "./mmcv", editable = false }
+mmdet = { path = "./mmdetection", editable = false }
+mmengine = { path = "./mmengine", editable = false }
+mmseg = { path = "./mmsegmentation", editable = false }
+flashocc2-lib = { path = "./lib", editable = true }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true

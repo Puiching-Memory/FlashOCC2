@@ -1,0 +1,18 @@
+[submodule "mmdetection3d"]
+	path = mmdetection3d
+	url = https://github.com/open-mmlab/mmdetection3d.git
+[submodule "nuscenes-devkit"]
+	path = nuscenes-devkit
+	url = https://github.com/dominikandreas/nuscenes-devkit.git
+[submodule "mmcv"]
+	path = mmcv
+	url = https://github.com/open-mmlab/mmcv.git
+[submodule "mmdetection"]
+	path = mmdetection
+	url = https://github.com/open-mmlab/mmdetection.git
+[submodule "mmengine"]
+	path = mmengine
+	url = https://github.com/open-mmlab/mmengine.git
+[submodule "mmsegmentation"]
+	path = mmsegmentation
+	url = https://github.com/open-mmlab/mmsegmentation.git

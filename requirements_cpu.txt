@@ -1,5 +1,0 @@
-mmengine==0.10.7
-mmcv==2.1.0
-mmdet==3.3.0
-mmdet3d==1.4.0
-mmsegmentation==1.2.2

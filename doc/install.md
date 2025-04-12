@@ -14,9 +14,6 @@ pip install git+https://github.com/dominikandreas/nuscenes-devkit.git@feature/py
 
 pip install -e . -v --no-build-isolation
 
-pip install numpy==1.26.4 matplotlib==3.10.1 opencv_python==4.11.0.86 Shapely==2.0.7 pycocotools==2.0.8 psutil==7.0.0
-pip install -r requirements.txt -v
-
 ```
 
 step 2. Prepare nuScenes dataset as introduced in [nuscenes_det.md](nuscenes_det.md) and create the pkl for FlashOCC by running:

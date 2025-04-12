@@ -1,5 +1,5 @@
-_base_ = ['../../../mmdetection3d/configs/_base_/datasets/nus-3d.py',
-          '../../../mmdetection3d/configs/_base_/default_runtime.py']
+_base_ = ['../_base_/datasets/nus-3d.py',
+          '../_base_/default_runtime.py']
 
 plugin = True
 plugin_dir = 'projects/mmdet3d_plugin/'
@@ -219,7 +219,7 @@ custom_hooks = [
     ),
 ]
 
-load_from = "ckpts/bevdet-r50-cbgs.pth"
+# load_from = "ckpts/bevdet-r50-cbgs.pth"
 # fp16 = dict(loss_scale='dynamic')
 evaluation = dict(interval=1, start=20, pipeline=test_pipeline)
 checkpoint_config = dict(interval=1, max_keep_ckpts=5)

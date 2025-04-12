@@ -3,24 +3,20 @@
 step 1. Install environment for pytorch training
 
 ```
-install uv env manager,see: https://docs.astral.sh/uv/getting-started/first-steps/
-
-uv python install 3.12
-
 apt install ninja-build  # enable parallel compilation
 apt install libomp-dev   # enable computational parallel optimization (OpenMP)
-apt install libgl1-mesa-glx libglib2.0-0 # fix OpenCV missing libGL.so.1
+apt install libgl1-mesa-glx libglib2.0-0 # fix OpenCV missing lib
 
-uv sync --extra {cpu,cu121} --no-build-isolation
+*using python=3.10 ubuntu2204 cuda12.1 docker sm_80
+
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+pip install numpy==1.26.4 matplotlib==3.10.1 opencv_python==4.11.0.86 Shapely==2.0.7 pycocotools==2.0.8 psutil==7.0.0
+pip install git+https://github.com/dominikandreas/nuscenes-devkit.git@feature/python312#subdirectory=setup -v
+pip install -r requirements.txt -v
+
 ```
 
 step 2. Prepare nuScenes dataset as introduced in [nuscenes_det.md](nuscenes_det.md) and create the pkl for FlashOCC by running:
-
-```shell
-uv run tools/create_data_bevdet.py
-```
-
-thus, the folder will be ranged as following:
 
 ```shell
 └── Path_to_FlashOcc2/
@@ -29,10 +25,14 @@ thus, the folder will be ranged as following:
             ├── v1.0-trainval (existing)
             ├── sweeps  (existing)
             ├── samples (existing)
-	    ├── lidarseg(existing)
+            ├── lidarseg(existing)
             ├── maps    (existing)
-            ├── bevdetv2-nuscenes_infos_train.pkl (new)
-            └── bevdetv2-nuscenes_infos_val.pkl (new)
+            ├── flashocc2-nuscenes_infos_train.pkl (new)
+            └── flashocc2-nuscenes_infos_val.pkl (new)
+```
+
+```
+python tools/create_data_bevdet.py
 ```
 
 step 3. For Occupancy Prediction task, download (only) the 'gts' from [CVPR2023-3D-Occupancy-Prediction](https://github.com/CVPR2023-3D-Occupancy-Prediction/CVPR2023-3D-Occupancy-Prediction) and arrange the folder as:

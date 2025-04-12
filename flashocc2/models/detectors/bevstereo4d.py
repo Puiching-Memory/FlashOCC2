@@ -1,15 +1,10 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch
-import torch.nn.functional as F
-from mmcv.runner import force_fp32
-
-from mmdet3d.models import DETECTORS
-from mmdet3d.models import builder
 from .bevdepth4d import BEVDepth4D
 from mmdet.models.backbones.resnet import ResNet
+from mmengine.registry import MODELS
 
-
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVStereo4D(BEVDepth4D):
     def __init__(self, **kwargs):
         super(BEVStereo4D, self).__init__(**kwargs)

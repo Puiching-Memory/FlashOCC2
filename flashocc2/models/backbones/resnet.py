@@ -5,10 +5,11 @@ from torch import nn
 
 from mmcv.cnn.bricks.conv_module import ConvModule
 from mmdet.models.backbones.resnet import BasicBlock, Bottleneck
-from mmdet3d.models import BACKBONES
+# from mmdet3d.models import BACKBONES
+from mmengine.registry import MODELS
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class CustomResNet(nn.Module):
     def __init__(
             self,
@@ -119,7 +120,7 @@ class BasicBlock3D(nn.Module):
         return self.relu(x)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class CustomResNet3D(nn.Module):
     def __init__(
             self,

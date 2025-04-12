@@ -1,0 +1,37 @@
+[project]
+name = "flashocc2"
+dynamic = ["version", "dependencies"]
+authors = [
+  { name="梦归云帆", email="1138663075@qq.com" },
+]
+description = "flashocc2: the rest of your life"
+keywords = ["python","OCC"]
+readme = "README.md"
+license = "APL2"
+requires-python = ">=3.10"
+requires=[
+  "numpy<2.0",
+  "matplotlib",
+  "opencv_python",
+  "Shapely",
+  "pycocotools",
+  "psutil",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+[tool.setuptools]
+packages = ["flashocc2", "flashocc2.ops", "flashocc2.core", "flashocc2.datasets", "flashocc2.models"]
+
+[project.urls]
+Homepage = "https://github.com/Puiching-Memory/FlashOCC2"
+Issues = "https://github.com/Puiching-Memory/FlashOCC2/issues"
+
+[build-system]
+requires = [
+  "setuptools",
+  "wheel",
+  "torch<2.6",
+]
+build-backend = "setuptools.build_meta"

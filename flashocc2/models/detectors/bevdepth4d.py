@@ -1,14 +1,11 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch
 import torch.nn.functional as F
-from mmcv.runner import force_fp32
-
-from mmdet3d.models import DETECTORS
-from mmdet3d.models import builder
+from mmengine.registry import MODELS
 from .bevdet4d import BEVDet4D
 
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDepth4D(BEVDet4D):
     def forward_train(self,
                       points=None,

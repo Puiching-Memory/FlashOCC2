@@ -5,10 +5,10 @@ from mmcv.cnn import build_norm_layer
 
 from torch.utils.checkpoint import checkpoint
 from mmcv.cnn.bricks import ConvModule
-from mmdet.models import NECKS
+from mmengine.registry import MODELS
 
 
-@NECKS.register_module()
+@MODELS.register_module()
 class FPN_LSS(nn.Module):
     def __init__(self,
                  in_channels,
@@ -74,7 +74,7 @@ class FPN_LSS(nn.Module):
         return x
 
 
-@NECKS.register_module()
+@MODELS.register_module()
 class LSSFPN3D(nn.Module):
     def __init__(self,
                  in_channels,

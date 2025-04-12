@@ -4,8 +4,7 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from mmdet.models.builder import LOSSES
+from mmengine.registry import MODELS
 from mmdet.models.losses.utils import weight_reduce_loss
 
 
@@ -198,7 +197,7 @@ def mask_cross_entropy(pred,
         pred_slice, target, weight=class_weight, reduction='mean')[None]
 
 
-@LOSSES.register_module(force=True)
+@MODELS.register_module(force=True)
 class CrossEntropyLoss(nn.Module):
 
     def __init__(self,

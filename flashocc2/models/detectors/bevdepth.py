@@ -1,22 +1,22 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch
 import torch.nn.functional as F
-from mmcv.runner import force_fp32
 
-from mmdet3d.models import DETECTORS
-from mmdet3d.models import CenterPoint
-from mmdet3d.models import builder
+from .bevdet import BEVDet
+from mmengine.registry import MODELS
 
 
-@DETECTORS.register_module()
-class BEVDet(CenterPoint):
+@MODELS.register_module()
+class BEVDepth(BEVDet):
     def __init__(self, img_backbone, img_neck, img_view_transformer, img_bev_encoder_backbone, img_bev_encoder_neck,
                  pts_bbox_head=None, **kwargs):
-        super(BEVDet, self).__init__(img_backbone=img_backbone, img_neck=img_neck, pts_bbox_head=pts_bbox_head,
-                                     **kwargs)
-        self.img_view_transformer = builder.build_neck(img_view_transformer)
-        self.img_bev_encoder_backbone = builder.build_backbone(img_bev_encoder_backbone)
-        self.img_bev_encoder_neck = builder.build_neck(img_bev_encoder_neck)
+        super(BEVDepth, self).__init__(img_backbone=img_backbone,
+                                       img_neck=img_neck,
+                                       img_view_transformer=img_view_transformer,
+                                       img_bev_encoder_backbone=img_bev_encoder_backbone,
+                                       img_bev_encoder_neck=img_bev_encoder_neck,
+                                       pts_bbox_head=pts_bbox_head
+                                       )
 
     def image_encoder(self, img, stereo=False):
         """
@@ -43,7 +43,6 @@ class BEVDet(CenterPoint):
         x = x.view(B, N, output_dim, ouput_H, output_W)
         return x, stereo_feat
 
-    @force_fp32()
     def bev_encoder(self, x):
         """
         Args:
@@ -91,9 +90,13 @@ class BEVDet(CenterPoint):
             x: [(B, C', H', W'), ]
             depth: (B*N, D, fH, fW)
         """
-        img_inputs = self.prepare_inputs(img_inputs)
-        x, _ = self.image_encoder(img_inputs[0])    # x: (B, N, C, fH, fW)
-        x, depth = self.img_view_transformer([x] + img_inputs[1:7])
+        imgs, sensor2keyegos, ego2globals, intrins, post_rots, post_trans, bda = self.prepare_inputs(img_inputs)
+        x, _ = self.image_encoder(imgs)    # x: (B, N, C, fH, fW)
+        mlp_input = self.img_view_transformer.get_mlp_input(
+            sensor2keyegos, ego2globals, intrins, post_rots, post_trans, bda)  # (B, N_views, 27)
+
+        x, depth = self.img_view_transformer([x, sensor2keyegos, ego2globals, intrins, post_rots,
+                                              post_trans, bda, mlp_input])
         # x: (B, C, Dy, Dx)
         # depth: (B*N, D, fH, fW)
         x = self.bev_encoder(x)
@@ -156,9 +159,11 @@ class BEVDet(CenterPoint):
         Returns:
             dict: Losses of different branches.
         """
-        img_feats, pts_feats, _ = self.extract_feat(
+        img_feats, pts_feats, depth = self.extract_feat(
             points, img_inputs=img_inputs, img_metas=img_metas, **kwargs)
-        losses = dict()
+        gt_depth = kwargs['gt_depth']   # (B, N_views, img_H, img_W)
+        loss_depth = self.img_view_transformer.get_depth_loss(gt_depth, depth)
+        losses = dict(loss_depth=loss_depth)
         losses_pts = self.forward_pts_train(img_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
                                             gt_bboxes_ignore)

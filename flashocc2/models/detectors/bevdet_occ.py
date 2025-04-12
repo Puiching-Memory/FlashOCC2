@@ -4,14 +4,13 @@ from .bevdet import BEVDet
 from .bevdepth import BEVDepth
 from .bevdepth4d import BEVDepth4D
 from .bevstereo4d import BEVStereo4D
-from mmdet3d.models import DETECTORS
-from mmdet3d.models.builder import build_head
+# from mmdet3d.models import DETECTORS
+# from mmdet3d.models.builder import build_head
+from mmengine.registry import MODELS
 import torch.nn.functional as F
-from mmdet3d.core import bbox3d2result
+from mmdet3d.structures import bbox3d2result
 import numpy as np
-from multiprocessing.dummy import Pool as ThreadPool
 from ...ops import nearest_assign
-# pool = ThreadPool(processes=4)  # 创建线程池
 
 # for pano
 grid_config_occ = {
@@ -73,14 +72,14 @@ coords = torch.stack(torch.meshgrid([coords_x, coords_y, coords_z])).permute(1, 
 st = [grid_config_occ['x'][0], grid_config_occ['y'][0], grid_config_occ['z'][0]]
 sx = [grid_config_occ['x'][2], grid_config_occ['y'][2], 0.4]
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDetOCC(BEVDet):
     def __init__(self,
                  occ_head=None,
                  upsample=False,
                  **kwargs):
         super(BEVDetOCC, self).__init__(**kwargs)
-        self.occ_head = build_head(occ_head)
+        self.occ_head = MODELS.build(occ_head)
         self.pts_bbox_head = None
         self.upsample = upsample
 
@@ -210,14 +209,14 @@ class BEVDetOCC(BEVDet):
         return outs
 
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDepthOCC(BEVDepth):
     def __init__(self,
                  occ_head=None,
                  upsample=False,
                  **kwargs):
         super(BEVDepthOCC, self).__init__(**kwargs)
-        self.occ_head = build_head(occ_head)
+        self.occ_head = MODELS.build(occ_head)
         self.pts_bbox_head = None
         self.upsample = upsample
 
@@ -566,14 +565,14 @@ class BEVDepthPano(BEVDepthOCC):
 
         return result_list
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDepth4DOCC(BEVDepth4D):
     def __init__(self,
                  occ_head=None,
                  upsample=False,
                  **kwargs):
         super(BEVDepth4DOCC, self).__init__(**kwargs)
-        self.occ_head = build_head(occ_head)
+        self.occ_head = MODELS.build(occ_head)
         self.pts_bbox_head = None
         self.upsample = upsample
 
@@ -693,7 +692,7 @@ class BEVDepth4DOCC(BEVDepth4D):
         outs = self.occ_head(occ_bev_feature)
         return outs
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDepth4DPano(BEVDepth4DOCC):
     def __init__(self,
                  aux_centerness_head=None,
@@ -707,7 +706,7 @@ class BEVDepth4DPano(BEVDepth4DOCC):
             aux_centerness_head.update(train_cfg=pts_train_cfg)
             pts_test_cfg = test_cfg.pts if test_cfg else None
             aux_centerness_head.update(test_cfg=pts_test_cfg)
-            self.aux_centerness_head = build_head(aux_centerness_head)
+            self.aux_centerness_head = MODELS.build(aux_centerness_head)
         if 'inst_class_ids' in kwargs:
             self.inst_class_ids = kwargs['inst_class_ids']
         else:
@@ -889,14 +888,14 @@ class BEVDepth4DPano(BEVDepth4DOCC):
 
         return result_list
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVStereo4DOCC(BEVStereo4D):
     def __init__(self,
                  occ_head=None,
                  upsample=False,
                  **kwargs):
         super(BEVStereo4DOCC, self).__init__(**kwargs)
-        self.occ_head = build_head(occ_head)
+        self.occ_head = MODELS.build(occ_head)
         self.pts_bbox_head = None
         self.upsample = upsample
 
@@ -1017,7 +1016,7 @@ class BEVStereo4DOCC(BEVStereo4D):
         return outs
     
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDetOCCTRT(BEVDetOCC):
     def __init__(self,
                  wocc=True,
@@ -1183,7 +1182,7 @@ class BEVDetOCCTRT(BEVDetOCC):
         return self.img_view_transformer.voxel_pooling_prepare_v2(coor)
 
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDepthOCCTRT(BEVDetOCC):
     def __init__(self,
                  wocc=True,
@@ -1292,7 +1291,7 @@ class BEVDepthOCCTRT(BEVDetOCC):
         return self.img_view_transformer.voxel_pooling_prepare_v2(coor), mlp_input
 
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDepthPanoTRT(BEVDepthPano):
     def __init__(self,
                  wocc=True,
@@ -1387,7 +1386,7 @@ class BEVDepthPanoTRT(BEVDepthPano):
         
         # outs_inst_center = self.aux_centerness_head([occ_bev_feature])
         x = self.aux_centerness_head.shared_conv(occ_bev_feature)     # (B, C'=share_conv_channel, H, W)
-        # 运行不同task_head,
+        # 锟斤拷锟叫诧拷同task_head,
         outs_inst_center_reg = self.aux_centerness_head.task_heads[0].reg(x)
         outs.append(outs_inst_center_reg)
         outs_inst_center_height = self.aux_centerness_head.task_heads[0].height(x)
@@ -1440,7 +1439,7 @@ class BEVDepthPanoTRT(BEVDepthPano):
 
         # outs_inst_center = self.aux_centerness_head([occ_bev_feature])
         x = self.aux_centerness_head.shared_conv(occ_bev_feature)     # (B, C'=share_conv_channel, H, W)
-        # 运行不同task_head,
+        # 锟斤拷锟叫诧拷同task_head,
         outs_inst_center_reg = self.aux_centerness_head.task_heads[0].reg(x)
         outs.append(outs_inst_center_reg)
         outs_inst_center_height = self.aux_centerness_head.task_heads[0].height(x)

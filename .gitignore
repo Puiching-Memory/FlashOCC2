@@ -6,3 +6,9 @@ data/
 *.run
 chsrc
 .bashrc
+build/
+work_dirs/
+*.tar
+*.tar.gz
+*.whl
+dist/

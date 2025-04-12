@@ -1,14 +1,10 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch
 import torch.nn.functional as F
-from mmcv.runner import force_fp32
-
-from mmdet3d.models import DETECTORS
-from mmdet3d.models import builder
 from .bevdet import BEVDet
+from mmengine.registry import MODELS
 
-
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDet4D(BEVDet):
     r"""BEVDet4D paradigm for multi-camera 3D object detection.
 
@@ -32,7 +28,7 @@ class BEVDet4D(BEVDet):
         super(BEVDet4D, self).__init__(**kwargs)
         self.pre_process = pre_process is not None
         if self.pre_process:
-            self.pre_process_net = builder.build_backbone(pre_process)
+            self.pre_process_net = MODELS.build(pre_process)
 
         self.align_after_view_transfromation = align_after_view_transfromation
         self.num_frame = num_adj + 1
@@ -115,7 +111,6 @@ class BEVDet4D(BEVDet):
         grid = grid[:, :, :, :2, 0] / normalize_factor.view(1, 1, 1, 2) * 2.0 - 1.0
         return grid
 
-    @force_fp32()
     def shift_feature(self, input, sensor2keyegos, bda, bda_adj=None):
         """
         Args:

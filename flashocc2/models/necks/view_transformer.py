@@ -1,15 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
-from mmcv.runner import BaseModule, force_fp32
-from mmdet3d.models.builder import NECKS
-from ...ops import bev_pool_v2
+from mmengine.model import BaseModule
+from mmengine.registry import MODELS
+from lib.ops import bev_pool_v2
 from ..model_utils import DepthNet
 from torch.cuda.amp.autocast_mode import autocast
 import torch.nn.functional as F
 
 
-@NECKS.register_module(force=True)
+@MODELS.register_module(force=True)
 class LSSViewTransformer(BaseModule):
     r"""Lift-Splat-Shoot view transformer with BEVPoolv2 implementation.
 
@@ -434,7 +434,7 @@ class LSSViewTransformer(BaseModule):
         return None
 
 
-@NECKS.register_module()
+@MODELS.register_module()
 class LSSViewTransformerBEVDepth(LSSViewTransformer):
     def __init__(self, loss_depth_weight=3.0, depthnet_cfg=dict(), **kwargs):
         super(LSSViewTransformerBEVDepth, self).__init__(**kwargs)
@@ -564,7 +564,6 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
             gt_depths.long(), num_classes=self.D + 1).view(-1, self.D + 1)[:, 1:]   # (B*N_views*fH*fW, D)
         return gt_depths.float()
 
-    @force_fp32()
     def get_depth_loss(self, depth_labels, depth_preds):
         """
         Args:
@@ -589,7 +588,7 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
         return self.loss_depth_weight * depth_loss
 
 
-@NECKS.register_module()
+@MODELS.register_module()
 class LSSViewTransformerBEVStereo(LSSViewTransformerBEVDepth):
     def __init__(self,  **kwargs):
         super(LSSViewTransformerBEVStereo, self).__init__(**kwargs)

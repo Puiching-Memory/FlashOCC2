@@ -10,8 +10,11 @@ apt install libgl1-mesa-glx libglib2.0-0 # fix OpenCV missing lib
 *using python=3.10 ubuntu2204 cuda12.1 docker sm_80
 
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-pip install numpy==1.26.4 matplotlib==3.10.1 opencv_python==4.11.0.86 Shapely==2.0.7 pycocotools==2.0.8 psutil==7.0.0
 pip install git+https://github.com/dominikandreas/nuscenes-devkit.git@feature/python312#subdirectory=setup -v
+
+pip install -e . -v --no-build-isolation
+
+pip install numpy==1.26.4 matplotlib==3.10.1 opencv_python==4.11.0.86 Shapely==2.0.7 pycocotools==2.0.8 psutil==7.0.0
 pip install -r requirements.txt -v
 
 ```

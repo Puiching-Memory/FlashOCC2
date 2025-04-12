@@ -1,6 +1,8 @@
 _base_ = ['../_base_/datasets/nus-3d.py',
           '../_base_/default_runtime.py']
 
+custom_imports = dict(imports=['models'], allow_failed_imports=False)
+
 plugin = True
 plugin_dir = 'projects/mmdet3d_plugin/'
 point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
@@ -201,15 +203,37 @@ for key in ['val', 'train', 'test']:
     data[key].update(share_data_config)
 
 # Optimizer
-optimizer = dict(type='AdamW', lr=1e-4, weight_decay=1e-2)
-optimizer_config = dict(grad_clip=dict(max_norm=5, norm_type=2))
-lr_config = dict(
-    policy='step',
-    warmup='linear',
-    warmup_iters=200,
-    warmup_ratio=0.001,
-    step=[24, ])
-runner = dict(type='EpochBasedRunner', max_epochs=24)
+# 添加优化器包装器配置
+optim_wrapper = dict(
+    type='OptimWrapper',
+    optimizer=dict(type='AdamW', lr=1e-4, weight_decay=1e-2),
+    clip_grad=dict(max_norm=5, norm_type=2)
+)
+
+# 添加学习率调度配置
+param_scheduler = [
+    dict(
+        type='LinearLR',
+        start_factor=0.001,
+        end=200,
+        by_epoch=False
+    ),
+    dict(
+        type='MultiStepLR',
+        begin=0,
+        end=24,
+        milestones=[24],
+        gamma=0.1,
+        by_epoch=True
+    )
+]
+
+# 添加训练/验证/测试循环配置
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=24, val_interval=1)
+val_cfg = dict(type='ValLoop')
+test_cfg = dict(type='TestLoop')
+
+runner = dict(type='EpochBasedRunner', max_epochs=24)  # 保留runner配置但确保与新版本兼容
 
 custom_hooks = [
     dict(

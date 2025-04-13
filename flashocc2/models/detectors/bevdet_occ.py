@@ -4,8 +4,6 @@ from .bevdet import BEVDet
 from .bevdepth import BEVDepth
 from .bevdepth4d import BEVDepth4D
 from .bevstereo4d import BEVStereo4D
-# from mmdet3d.models import DETECTORS
-# from mmdet3d.models.builder import build_head
 from mmengine.registry import MODELS
 import torch.nn.functional as F
 from mmdet3d.structures import bbox3d2result
@@ -348,7 +346,7 @@ class BEVDepthOCC(BEVDepth):
         return outs
 
 
-@DETECTORS.register_module()
+@MODELS.register_module()
 class BEVDepthPano(BEVDepthOCC):
     def __init__(self,
                  aux_centerness_head=None,

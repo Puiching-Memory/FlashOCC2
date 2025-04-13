@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from mmengine.model import BaseModule
 from mmengine.registry import MODELS
-from lib.ops import bev_pool_v2
+from ...ops import bev_pool_v2
 from ..model_utils import DepthNet
 from torch.cuda.amp.autocast_mode import autocast
 import torch.nn.functional as F

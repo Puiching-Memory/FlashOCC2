@@ -2,9 +2,9 @@
 import torch
 from torch import nn
 from mmcv.cnn import ConvModule
-from mmcv.runner import BaseModule
+from mmengine.model import BaseModule
 import numpy as np
-from mmdet3d.models.builder import HEADS, build_loss
+from mmengine.registry import MODELS
 from ..losses.semkitti_loss import sem_scal_loss, geo_scal_loss
 from ..losses.lovasz_softmax import lovasz_softmax
 
@@ -31,7 +31,7 @@ nusc_class_frequencies = np.array([
 ])
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class BEVOCCHead3D(BaseModule):
     def __init__(self,
                  in_dim=32,
@@ -70,7 +70,7 @@ class BEVOCCHead3D(BaseModule):
             self.cls_weights = class_weights
             loss_occ['class_weight'] = class_weights
 
-        self.loss_occ = build_loss(loss_occ)
+        self.loss_occ = MODELS.build(loss_occ)
 
     def forward(self, img_feats):
         """
@@ -157,7 +157,7 @@ class BEVOCCHead3D(BaseModule):
         return list(occ_res)
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class BEVOCCHead2D(BaseModule):
     def __init__(self,
                  in_dim=256,
@@ -199,7 +199,7 @@ class BEVOCCHead2D(BaseModule):
             class_weights = torch.from_numpy(1 / np.log(nusc_class_frequencies[:num_classes] + 0.001))
             self.cls_weights = class_weights
             loss_occ['class_weight'] = class_weights        # ce loss
-        self.loss_occ = build_loss(loss_occ)
+        self.loss_occ = MODELS.build(loss_occ)
 
     def forward(self, img_feats):
         """
@@ -289,7 +289,7 @@ class BEVOCCHead2D(BaseModule):
         return list(occ_res)
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class BEVOCCHead2D_V2(BaseModule):      # Use stronger loss setting
     def __init__(self,
                  in_dim=256,
@@ -332,7 +332,7 @@ class BEVOCCHead2D_V2(BaseModule):      # Use stronger loss setting
         if self.class_balance:
             class_weights = torch.from_numpy(1 / np.log(nusc_class_frequencies[:num_classes] + 0.001))
             self.cls_weights = class_weights
-        self.loss_occ = build_loss(loss_occ)
+        self.loss_occ = MODELS.build(loss_occ)
 
     def forward(self, img_feats):
         """

@@ -1,7 +1,5 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch
-import torch.nn.functional as F
-
 from .bevdet import BEVDet
 from mmengine.registry import MODELS
 

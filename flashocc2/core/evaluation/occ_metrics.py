@@ -41,7 +41,7 @@ def pcolor(string, color, on_color=None, attrs=None):
 
 
 def getCellCoordinates(points, voxelSize):
-    return (points / voxelSize).astype(np.int)
+    return (points / voxelSize).astype(np.int32)
 
 
 def getNumUniqueCells(cells):

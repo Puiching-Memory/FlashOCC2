@@ -11,8 +11,9 @@ apt install libgl1-mesa-glx libglib2.0-0 # fix OpenCV missing lib
 
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 pip install git+https://github.com/dominikandreas/nuscenes-devkit.git@feature/python312#subdirectory=setup -v
+pip install -r requirements.txt -v
 
-pip install -e . -v --no-build-isolation
+pip install -e . -v --no-build-isolation --force-reinstall
 
 ```
 
@@ -23,6 +24,7 @@ step 2. Prepare nuScenes dataset as introduced in [nuscenes_det.md](nuscenes_det
     └── data
         └── nuscenes
             ├── v1.0-trainval (existing)
+            ├── v1.0-test (existing)
             ├── sweeps  (existing)
             ├── samples (existing)
             ├── lidarseg(existing)
@@ -32,7 +34,7 @@ step 2. Prepare nuScenes dataset as introduced in [nuscenes_det.md](nuscenes_det
 ```
 
 ```
-python tools/create_data_bevdet.py
+python tools/create_data.py nuscenes --root-path ./data/nuscenes --out-dir ./data/nuscenes --extra-tag nuscenes
 ```
 
 step 3. For Occupancy Prediction task, download (only) the 'gts' from [CVPR2023-3D-Occupancy-Prediction](https://github.com/CVPR2023-3D-Occupancy-Prediction/CVPR2023-3D-Occupancy-Prediction) and arrange the folder as:

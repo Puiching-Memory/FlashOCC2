@@ -11,6 +11,7 @@ def make_cuda_ext(
     extra_compile_args = {"cxx": [] + extra_args}
 
     if torch.cuda.is_available() or os.getenv("FORCE_CUDA", "0") == "1":
+        print(f"Compiling {name} with CUDA")
         define_macros += [("WITH_CUDA", None)]
         extension = CUDAExtension
         extra_compile_args["nvcc"] = extra_args + [
@@ -20,9 +21,8 @@ def make_cuda_ext(
         ]
         sources += sources_cuda
     else:
-        print("Compiling {} without CUDA".format(name))
+        print(f"Compiling {name} without CUDA")
         extension = CppExtension
-        # raise EnvironmentError('CUDA is required to compile MMDetection!')
 
     return extension(
         name="{}.{}".format(module, name),

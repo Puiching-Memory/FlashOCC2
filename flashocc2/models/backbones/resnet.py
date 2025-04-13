@@ -5,7 +5,6 @@ from torch import nn
 
 from mmcv.cnn.bricks.conv_module import ConvModule
 from mmdet.models.backbones.resnet import BasicBlock, Bottleneck
-# from mmdet3d.models import BACKBONES
 from mmengine.registry import MODELS
 
 

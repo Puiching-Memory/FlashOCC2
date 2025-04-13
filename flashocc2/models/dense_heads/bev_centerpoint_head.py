@@ -3,19 +3,17 @@ import copy
 
 import torch
 from mmcv.cnn import ConvModule, build_conv_layer
-from mmcv.runner import BaseModule
+from mmengine.model import BaseModule
+from mmengine.registry import MODELS
 from torch import nn
-
-from mmdet3d.core import (circle_nms, draw_heatmap_gaussian, gaussian_radius,
-                          xywhr2xyxyr)
-from ...core.post_processing import nms_bev
-from mmdet3d.models import builder
+from mmdet3d.models import circle_nms, draw_heatmap_gaussian, gaussian_radius
+from mmdet3d.models import nms_bev
 from mmdet3d.models.utils import clip_sigmoid
-from mmdet.core import build_bbox_coder, multi_apply, reduce_mean
-from mmdet3d.models.builder import HEADS, build_loss
+from mmdet.utils import reduce_mean
+from mmdet.models.utils import multi_apply
+from mmdet.models import build_bbox_coder
 
-
-@HEADS.register_module(force=True)
+@MODELS.register_module(force=True)
 class SeparateHead(BaseModule):
     """SeparateHead for CenterHead.
 
@@ -122,7 +120,7 @@ class SeparateHead(BaseModule):
         return ret_dict
 
 
-@HEADS.register_module(force=True)
+@MODELS.register_module(force=True)
 class DCNSeparateHead(BaseModule):
     r"""DCNSeparateHead for CenterHead.
 
@@ -241,7 +239,7 @@ class DCNSeparateHead(BaseModule):
         return ret
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class BEV_CenterHead(BaseModule):
     """CenterHead for CenterPoint.
 
@@ -304,8 +302,8 @@ class BEV_CenterHead(BaseModule):
         self.num_classes = num_classes
         self.norm_bbox = norm_bbox
 
-        self.loss_cls = build_loss(loss_cls)
-        self.loss_bbox = build_loss(loss_bbox)
+        self.loss_cls = MODELS.build(loss_cls)
+        self.loss_bbox = MODELS.build(loss_bbox)
         self.bbox_coder = build_bbox_coder(bbox_coder)
         self.num_anchor_per_locs = [n for n in num_classes]
         self.fp16_enabled = False
@@ -329,7 +327,7 @@ class BEV_CenterHead(BaseModule):
             heads.update(dict(heatmap=(num_cls, num_heatmap_convs)))
             separate_head.update(
                 in_channels=share_conv_channel, heads=heads, num_cls=num_cls)
-            self.task_heads.append(builder.build_head(separate_head))
+            self.task_heads.append(MODELS.build(separate_head))
 
         self.with_velocity = 'vel' in common_heads.keys()
         self.task_specific = task_specific
@@ -985,7 +983,7 @@ class BEV_CenterHead(BaseModule):
         return predictions_dicts
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class Centerness_Head(BaseModule):
     """CenterHead for CenterPoint.
 
@@ -1049,8 +1047,8 @@ class Centerness_Head(BaseModule):
         self.num_classes = num_classes
         self.norm_bbox = norm_bbox
 
-        self.loss_cls = build_loss(loss_cls)
-        self.loss_bbox = build_loss(loss_bbox)
+        self.loss_cls = MODELS.build(loss_cls)
+        self.loss_bbox = MODELS.build(loss_bbox)
         self.bbox_coder = build_bbox_coder(bbox_coder)
         self.num_anchor_per_locs = [n for n in num_classes]
         self.fp16_enabled = False
@@ -1074,7 +1072,7 @@ class Centerness_Head(BaseModule):
             heads.update(dict(heatmap=(num_cls, num_heatmap_convs)))
             separate_head.update(
                 in_channels=share_conv_channel, heads=heads, num_cls=num_cls)
-            self.task_heads.append(builder.build_head(separate_head))
+            self.task_heads.append(MODELS.build(separate_head))
 
         self.with_velocity = 'vel' in common_heads.keys()
         self.task_specific = task_specific

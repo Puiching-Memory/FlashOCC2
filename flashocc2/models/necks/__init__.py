@@ -1,5 +1,3 @@
-from .fpn import CustomFPN
-from .view_transformer import LSSViewTransformer, LSSViewTransformerBEVDepth, LSSViewTransformerBEVStereo
-from .lss_fpn import FPN_LSS
+from .ViewTransformerLSSBEVDepth import ViewTransformerLSSBEVDepth
 
-__all__ = ['CustomFPN', 'FPN_LSS', 'LSSViewTransformer', 'LSSViewTransformerBEVDepth', 'LSSViewTransformerBEVStereo']
+__all__ = ["ViewTransformerLSSBEVDepth"]

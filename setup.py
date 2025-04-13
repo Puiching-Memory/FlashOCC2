@@ -67,6 +67,14 @@ if __name__ == "__main__":
                     "src",
                 ],
             ),
+            make_cuda_ext(
+                name="occ_pool_ext",
+                module="flashocc2.ops.occ_pool",
+                sources=["src/occ_pool.cpp", "src/occ_pool_cuda.cu"],
+                extra_include_path=[
+                    "src",
+                ],
+            ),
         ],
         cmdclass={"build_ext": BuildExtension},
     )

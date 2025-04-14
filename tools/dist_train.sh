@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
-export CUDA_VISIBLE_DEVICES=4
+export NCCL_DEBUG=WARN
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 CONFIG=$1
 GPUS=$2

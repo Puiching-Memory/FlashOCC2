@@ -1,5 +1,4 @@
-_base_ = [#"../_base_/datasets/nus-3d.py", 
-          "../_base_/default_runtime.py"]
+_base_ = ["../_base_/default_runtime.py"]  # "../_base_/datasets/nus-3d.py",
 
 custom_imports = dict(
     imports=[
@@ -10,17 +9,18 @@ custom_imports = dict(
 
 # load_from = 'ckpt/r101_dcn_fcos3d_pretrain.pth'
 
-dataset_type = 'NuScenesSegDataset'
-data_root = 'data/nuscenes'
+dataset_type = "NuScenesSegDataset"
+data_root = "data/nuscenes"
 data_prefix = dict(
-    pts='samples/LIDAR_TOP',
-    pts_semantic_mask='lidarseg/v1.0-trainval',
-    CAM_FRONT='samples/CAM_FRONT',
-    CAM_FRONT_LEFT='samples/CAM_FRONT_LEFT',
-    CAM_FRONT_RIGHT='samples/CAM_FRONT_RIGHT',
-    CAM_BACK='samples/CAM_BACK',
-    CAM_BACK_RIGHT='samples/CAM_BACK_RIGHT',
-    CAM_BACK_LEFT='samples/CAM_BACK_LEFT')
+    pts="samples/LIDAR_TOP",
+    pts_semantic_mask="lidarseg/v1.0-trainval",
+    CAM_FRONT="samples/CAM_FRONT",
+    CAM_FRONT_LEFT="samples/CAM_FRONT_LEFT",
+    CAM_FRONT_RIGHT="samples/CAM_FRONT_RIGHT",
+    CAM_BACK="samples/CAM_BACK",
+    CAM_BACK_RIGHT="samples/CAM_BACK_RIGHT",
+    CAM_BACK_LEFT="samples/CAM_BACK_LEFT",
+)
 
 input_modality = dict(use_lidar=False, use_camera=True)
 backend_args = None
@@ -29,10 +29,10 @@ point_cloud_range = [-50.0, -50.0, -5.0, 50.0, 50.0, 3.0]
 grid_size_vt = [100, 100, 8]
 num_points_per_voxel = 35
 nbr_class = 17
-use_lidar=False
-use_radar=False
-use_occ3d=False
-find_unused_parameters=False
+use_lidar = False
+use_radar = False
+use_occ3d = False
+find_unused_parameters = False
 
 model = dict(
     type="Flashocc2Orchestrator",
@@ -46,10 +46,10 @@ model = dict(
         norm_eval=False,
         with_cp=True,
         style="pytorch",
-        pretrained="torchvision://resnet50",
+        init_cfg=dict(type="Pretrained", checkpoint="torchvision://resnet50"),
     ),
     neck=dict(
-        type='mmdet.DilatedEncoder',
+        type="mmdet.DilatedEncoder",
         in_channels=2048,
         out_channels=512,
         block_mid_channels=128,
@@ -67,113 +67,123 @@ model = dict(
 
 train_pipeline = [
     dict(
-        type='BEVLoadMultiViewImageFromFiles',
+        type="BEVLoadMultiViewImageFromFiles",
         to_float32=False,
-        color_type='unchanged',
+        color_type="unchanged",
         num_views=6,
-        backend_args=backend_args),
-    dict(type='LoadOccupancy'),
+        backend_args=backend_args,
+    ),
+    dict(type="LoadOccupancy"),
     dict(
-        type='LoadAnnotations3D',
+        type="LoadAnnotations3D",
         with_bbox_3d=False,
         with_label_3d=False,
         with_seg_3d=True,
         with_attr_label=False,
-        seg_3d_dtype='np.uint8'),
-    dict(
-        type='MultiViewWrapper',
-        transforms=dict(type='PhotoMetricDistortion3D')),
-    dict(type='SegLabelMapping'),
-    dict(
-        type='Custom3DPack',
-        keys=['img','occ_200'], 
-        meta_keys=['lidar2img'])
+        seg_3d_dtype="np.uint8",
+    ),
+    dict(type="MultiViewWrapper", transforms=dict(type="PhotoMetricDistortion3D")),
+    dict(type="SegLabelMapping"),
+    dict(type="Custom3DPack", keys=["img", "occ_200"], meta_keys=["lidar2img"]),
 ]
 
 val_pipeline = [
     dict(
-        type='BEVLoadMultiViewImageFromFiles',
+        type="BEVLoadMultiViewImageFromFiles",
         to_float32=False,
-        color_type='unchanged',
+        color_type="unchanged",
         num_views=6,
-        backend_args=backend_args),
-    dict(type='LoadOccupancy'),
+        backend_args=backend_args,
+    ),
+    dict(type="LoadOccupancy"),
     dict(
-        type='LoadAnnotations3D',
+        type="LoadAnnotations3D",
         with_bbox_3d=False,
         with_label_3d=False,
         with_seg_3d=True,
         with_attr_label=False,
-        seg_3d_dtype='np.uint8'),
-    dict(type='SegLabelMapping'),
-    dict(
-        type='Custom3DPack',
-        keys=['img', 'points','pts_semantic_mask','radars','occ_200'], 
-        meta_keys=['lidar2img'])
+        seg_3d_dtype="np.uint8",
+    ),
+    dict(type="MultiViewWrapper", transforms=dict(type="PhotoMetricDistortion3D")),
+    dict(type="SegLabelMapping"),
+    dict(type="Custom3DPack", keys=["img", "occ_200"], meta_keys=["lidar2img"]),
 ]
 
 test_pipeline = val_pipeline
 
 train_dataloader = dict(
-    batch_size=1, 
-    num_workers=4,
+    batch_size=1,
+    num_workers=6,
     persistent_workers=True,
     drop_last=True,
-    sampler=dict(type='DefaultSampler', shuffle=True), 
+    sampler=dict(type="DefaultSampler", shuffle=True),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        ann_file='nuscenes_infos_occfusion_train.pkl',
+        indices=10, # 测试用,mini
+        ann_file="nuscenes_infos_occfusion_train.pkl",
         pipeline=train_pipeline,
-        test_mode=False))
+        test_mode=False,
+    ),
+)
 
 val_dataloader = dict(
-    batch_size=1, 
+    batch_size=1,
     num_workers=4,
     persistent_workers=True,
     drop_last=False,
-    sampler=dict(type='DefaultSampler', shuffle=False),
+    sampler=dict(type="DefaultSampler", shuffle=False),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        ann_file='nuscenes_infos_occfusion_val.pkl',
+        indices=10, # 测试用,mini
+        ann_file="nuscenes_infos_occfusion_val.pkl",
         pipeline=val_pipeline,
-        test_mode=True)) 
+        test_mode=True,
+    ),
+)
 
 test_dataloader = val_dataloader
 
-val_evaluator = dict(type='EvalMetric')
+val_evaluator = dict(type="EvalMetric")
 
 test_evaluator = val_evaluator
 
-vis_backends = [dict(type='LocalVisBackend')]
+vis_backends = [dict(type="LocalVisBackend")]
 visualizer = dict(
-    type='Det3DLocalVisualizer', vis_backends=vis_backends, name='visualizer')
+    type="Det3DLocalVisualizer", vis_backends=vis_backends, name="visualizer"
+)
 
 optim_wrapper = dict(
-    type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=2e-4, weight_decay=0.01), 
-    paramwise_cfg=dict(custom_keys={
-        'backbone': dict(lr_mult=0.1),
-    }),
+    # type='OptimWrapper',
+    type="AmpOptimWrapper",  # 启用AMP
+    optimizer=dict(type="AdamW", lr=2e-4, weight_decay=0.01),
+    # paramwise_cfg=dict(
+    #     custom_keys={
+    #         "backbone": dict(lr_mult=0.1),
+    #     }
+    # ),
     clip_grad=dict(max_norm=35, norm_type=2),
 )
 
 param_scheduler = [
-    dict(type='LinearLR', start_factor=1e-5, by_epoch=False, begin=0, end=500),
+    dict(type="LinearLR", start_factor=1e-5, by_epoch=False, begin=0, end=500),
     dict(
-        type='CosineAnnealingLR',
+        type="CosineAnnealingLR",
         begin=0,
         T_max=24,
         by_epoch=True,
         eta_min=1e-6,
-        convert_to_iter_based=True)
+        convert_to_iter_based=True,
+    ),
 ]
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=24,val_begin=1, val_interval=1)
-val_cfg = dict(type='ValLoop')
-test_cfg = dict(type='TestLoop')
+train_cfg = dict(type="EpochBasedTrainLoop", max_epochs=24, val_begin=1, val_interval=1)
+val_cfg = dict(type="ValLoop")
+test_cfg = dict(type="TestLoop")
 
-default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1))
+default_hooks = dict(checkpoint=dict(type="CheckpointHook", interval=1))
+
+compile = False

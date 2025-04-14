@@ -543,7 +543,6 @@ class DepthAggregation(nn.Module):
             # nn.ReLU(inplace=True),
         )
 
-    @autocast(False)
     def forward(self, x):
         x = checkpoint(self.reduce_conv, x)
         short_cut = x

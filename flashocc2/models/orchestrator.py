@@ -3,12 +3,14 @@ from mmdet3d.structures.det3d_data_sample import (
     ForwardResults,
     OptSampleList,
     SampleList,
+    PointData
 )
 
 from focal_loss.focal_loss import FocalLoss
 import torch
-
+import numpy as np
 from mmdet3d.models import Base3DSegmentor
+from mmengine.logging import logger
 
 # from mmengine.model import BaseModel
 from mmdet3d.registry import MODELS
@@ -80,7 +82,30 @@ class Flashocc2Orchestrator(Base3DSegmentor):
     def predict(self, batch_inputs: dict, batch_data_samples: SampleList) -> SampleList:
         """Predict results from a batch of inputs and data samples with post-
         processing."""
-        return
+        batch_outputs = self._forward(
+            batch_inputs, batch_data_samples
+        )  # B, X, Y, Z, Cls
+
+        voxel_logit = batch_outputs.reshape(len(batch_data_samples), 200, 200, 16, 17)
+        voxel_pred = torch.argmax(voxel_logit, dim=-1)
+
+        voxels_gt = self.multiscale_supervision(
+            batch_inputs["occ_200"],
+            [1, 1, 1],
+            [len(batch_data_samples), 200, 200, 16],
+        )  # torch.Size([B, 200, 200, 16])
+        #voxels_gt = voxels_gt.reshape(len(batch_data_samples),-1)
+
+        for i in range(len(batch_data_samples)):
+            batch_data_samples[i].set_data({
+                'pts_seg_logits': PointData(pts_seg_logits=voxel_logit[i]),
+                'pred_pts_seg': PointData(pts_semantic_mask=voxel_pred[i])
+            })
+            # 设置评估用的 ground truth
+            batch_data_samples[i].eval_ann_info['pts_semantic_mask'] = \
+                voxels_gt[i].cpu().numpy().astype(np.uint8)
+            
+        return batch_data_samples
 
     def encode_decode(
         self, batch_inputs: torch.Tensor, batch_data_samples: SampleList
@@ -125,3 +150,4 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         return {
             "img_feats": x,  # torch.Size([B*N, 512, 29, 50])
         }
+ 

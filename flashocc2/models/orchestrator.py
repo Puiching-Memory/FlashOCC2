@@ -7,6 +7,7 @@ from mmdet3d.structures.det3d_data_sample import (
 )
 
 from focal_loss.focal_loss import FocalLoss
+from mmdet3d.models.losses import LovaszLoss
 import torch
 import numpy as np
 from mmdet3d.models import Base3DSegmentor
@@ -34,7 +35,9 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         # self.view_transformer = MODELS.build(view_transformer)
         # self.mixter = MODELS.build(mixter)
         self.head = MODELS.build(head)
-        self.loss_cls = FocalLoss(gamma=2,ignore_index=255)
+        self.loss_cls = LovaszLoss(loss_type='multi_class',
+                                      per_sample=False,
+                                      reduction='none')
 
     def _forward(
         self, batch_inputs: dict, batch_data_samples: OptSampleList = None
@@ -71,8 +74,8 @@ class Flashocc2Orchestrator(Base3DSegmentor):
             [len(batch_data_samples), 200, 200, 16],
         )  # torch.Size([B, 200, 200, 16])
 
-        voxels_gt = torch.flatten(voxels_gt, start_dim=1) # B,N
-        batch_outputs = batch_outputs.view(len(batch_data_samples),-1,batch_outputs.shape[4]) # B,N,Cls
+        voxels_gt = torch.flatten(voxels_gt, start_dim=0) # -1
+        batch_outputs = batch_outputs.view(-1,batch_outputs.shape[4]) # -1,Cls
         batch_outputs = batch_outputs.softmax(dim=-1)
 
         loss1 = torch.nan_to_num(self.loss_cls(batch_outputs, voxels_gt))
@@ -94,6 +97,7 @@ class Flashocc2Orchestrator(Base3DSegmentor):
             [1, 1, 1],
             [len(batch_data_samples), 200, 200, 16],
         )  # torch.Size([B, 200, 200, 16])
+        
         #voxels_gt = voxels_gt.reshape(len(batch_data_samples),-1)
 
         for i in range(len(batch_data_samples)):

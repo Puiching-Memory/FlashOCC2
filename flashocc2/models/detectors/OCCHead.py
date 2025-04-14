@@ -12,29 +12,23 @@ class FlashOcc2Head(BaseModule):
         super(FlashOcc2Head, self).__init__()
 
         self.head = nn.Sequential(
-            # 第一层转置卷积：将空间尺寸从 29x50 → 58x100，通道数减半
-            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(512, 256, kernel_size=3, padding=1),
             nn.ReLU(),
-            # 第二层转置卷积：空间尺寸 → 116x200，通道数继续减半
             nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
-            # 第三层转置卷积：空间尺寸 → 232x400，通道数调整为 16×17=272
-            nn.ConvTranspose2d(128, 272, kernel_size=2, stride=2, padding=0),
+            nn.ConvTranspose2d(128, 128, kernel_size=2, stride=2, padding=0),
+            nn.Conv2d(128, 272, kernel_size=1, stride=1),
             nn.ReLU(),
-            # 插值调整到精确的 200x200 空间尺寸
-            # nn.Upsample(size=(200, 200), mode='bilinear', align_corners=False),
-            # 自适应池化层调整空间尺寸到 200x200
             nn.AdaptiveAvgPool2d((200, 200)),
         )
 
-        self.c_fusion = nn.Sequential(nn.AdaptiveAvgPool3d((1,40000,272)))
 
-    @autocast("cuda", torch.float32)
     def forward(self, x):
         # input: torch.Size([B*N, 512, 29, 50])
         BN, C, W, H = x.shape
 
-        x = self.head(x)  # torch.Size([B*6, 272, 200, 200])
+        x = self.head(x)  # torch.Size([B*N, 272, 200, 200])
 
         # (B*6,200,200,272)
         x = x.permute(0, 2, 3, 1)
@@ -43,7 +37,8 @@ class FlashOcc2Head(BaseModule):
         x = x.view(-1, 6, 40000, 272)
 
         # (B,1,40000,272)
-        x = self.c_fusion(x)
+        #x = self.c_fusion(x)
+        x = x.mean(dim=1)
         #print('1',x.shape)
 
         # (B,200,200,16,17)

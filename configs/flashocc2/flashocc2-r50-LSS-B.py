@@ -3,6 +3,7 @@ _base_ = ["../_base_/default_runtime.py"]  # "../_base_/datasets/nus-3d.py",
 custom_imports = dict(
     imports=[
         "flashocc2",
+        "swanlab.integration.mmengine",        
     ],
     allow_failed_imports=False,
 )
@@ -113,7 +114,7 @@ test_pipeline = val_pipeline
 
 train_dataloader = dict(
     batch_size=1,
-    num_workers=6,
+    num_workers=4,
     persistent_workers=True,
     drop_last=True,
     sampler=dict(type="DefaultSampler", shuffle=True),
@@ -121,7 +122,7 @@ train_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        indices=10, # 测试用,mini
+        #indices=100, # 测试用,mini
         ann_file="nuscenes_infos_occfusion_train.pkl",
         pipeline=train_pipeline,
         test_mode=False,
@@ -138,7 +139,7 @@ val_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        indices=10, # 测试用,mini
+        #indices=100, # 测试用,mini
         ann_file="nuscenes_infos_occfusion_val.pkl",
         pipeline=val_pipeline,
         test_mode=True,
@@ -151,9 +152,21 @@ val_evaluator = dict(type="EvalMetric")
 
 test_evaluator = val_evaluator
 
-vis_backends = [dict(type="LocalVisBackend")]
+vis_backends = [
+    dict(
+        type="SwanlabVisBackend",
+        init_kwargs={ # swanlab.init 参数
+            "project": "flashocc2",
+            "experiment_name": "flashocc2-r50-LSS-B",  # 实验名称
+            "description": "some NOTE here",  # 实验的描述信息
+        },
+    ),
+]
+
 visualizer = dict(
-    type="Det3DLocalVisualizer", vis_backends=vis_backends, name="visualizer"
+    type="Visualizer",
+    vis_backends=vis_backends,
+    name="visualizer",
 )
 
 optim_wrapper = dict(

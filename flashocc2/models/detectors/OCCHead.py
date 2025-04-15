@@ -12,37 +12,27 @@ class FlashOcc2Head(BaseModule):
         super(FlashOcc2Head, self).__init__()
 
         self.head = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            nn.Conv2d(512, 256, kernel_size=3, padding=1),
+            nn.Conv2d(768, 512, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(512, 272, kernel_size=1),
             nn.ReLU(),
-            nn.ConvTranspose2d(128, 128, kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(128, 272, kernel_size=1, stride=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((200, 200)),
         )
 
-
     def forward(self, x):
-        # input: torch.Size([B*N, 512, 29, 50])
+        # input: bev_feat: (B*6, C, Dy, Dx)
+        # torch.Size([6, 128, 200, 200])
         BN, C, W, H = x.shape
+        #print("1", x.shape)
 
-        x = self.head(x)  # torch.Size([B*N, 272, 200, 200])
+        x = x.reshape(1, -1, W, H)  # (B, C*6, W, H)
+        #print("2", x.shape)
 
-        # (B*6,200,200,272)
-        x = x.permute(0, 2, 3, 1)
-
-        # (B,6,40000,272)
-        x = x.view(-1, 6, 40000, 272)
-
-        # (B,1,40000,272)
-        #x = self.c_fusion(x)
-        x = x.mean(dim=1)
-        #print('1',x.shape)
+        x = self.head(x)
+        #print("3", x.shape)
 
         # (B,200,200,16,17)
-        x = x.view(-1,200,200,16,17)
-        #print('2',x.shape)
+        x = x.reshape(BN // 6, 200, 200, 16, 17)
+        #print("4", x.shape)
+
         # output:torch.Size([1, 200, 200, 16, 17]) B, x, y, z, cls
         return x

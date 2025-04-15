@@ -1,3 +1,3 @@
-from .ViewTransformerLSSBEVDepth import ViewTransformerLSSBEVDepth
+from .ViewTransformer import LSSViewTransformer
 
-__all__ = ["ViewTransformerLSSBEVDepth"]
+__all__ = ["LSSViewTransformer"]

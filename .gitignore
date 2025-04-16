@@ -12,3 +12,4 @@ work_dirs/
 *.tar.gz
 *.whl
 dist/
+_*.py

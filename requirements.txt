@@ -3,7 +3,7 @@ matplotlib
 opencv_python
 Shapely
 pycocotools
-focal_loss_torch
+# focal_loss_torch
 
 mmengine==0.10.7
 mmcv==2.1.0

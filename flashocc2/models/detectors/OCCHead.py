@@ -24,24 +24,21 @@ class FlashOcc2Head(BaseModule):
         self.predicter = nn.Sequential(
             nn.Linear(16 * 17, 16 * 17 * 2),
             nn.Softplus(),
-            nn.Linear(16 * 17 * 2, num_classes * 16),
+            nn.Linear(16 * 17 * 2, 16 * 17),
         )
 
     def forward(self, x):
-        # input: bev_feat: (B*6, C, Dy, Dx)
+        # input: bev_feat: (B, C, Dy, Dx)
+        
         # torch.Size([1, 128, 200, 200])
         B, C, W, H = x.shape
         #print("1", x.shape)
 
-        x = self.head(x)
-        #print("2", x.shape) # B*N, 16 * 17, 200, 200
-
-        x = x.permute(0, 3, 2, 1)
-        # B*N, 200, 200, 16 * 17
-        #print("3", x.shape)
+        x = self.head(x).permute(0, 3, 2, 1).contiguous()
+        #print("2", x.shape) # B, Dz*cls, 200, 200 -> B, 200, 200, Dz*cls
 
         x = self.predicter(x)
-        #print("4", x.shape)
+        #print("3", x.shape)
 
         x = x.reshape(B, W, H, 16, 17)
 

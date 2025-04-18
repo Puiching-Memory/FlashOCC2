@@ -15,6 +15,27 @@ import cv2
 from mmdet3d.models import Base3DSegmentor
 from mmdet3d.registry import MODELS
 
+palette = [
+    [0, 0, 0],  # noise                                         0
+    [255, 120, 50],  # barrier              orange              1
+    [255, 192, 203],  # bicycle              pink               2
+    [255, 255, 0],  # bus                  yellow               3
+    [0, 150, 245],  # car                  blue                 4
+    [0, 255, 255],  # construction_vehicle cyan                 5
+    [255, 127, 0],  # motorcycle           dark orange          6
+    [255, 0, 0],  # pedestrian           red                    7
+    [255, 240, 150],  # traffic_cone         light yellow       8
+    [135, 60, 0],  # trailer              brown                 9
+    [160, 32, 240],  # truck                purple              10
+    [255, 0, 255],  # driveable_surface    dark pink            11
+    [139, 137, 137],  # other_flat           dark red           12
+    [75, 0, 75],  # sidewalk             dard purple            13
+    [150, 240, 80],  # terrain              light green         14
+    [230, 230, 250],  # manmade              white              15
+    [0, 175, 0],  # vegetation           green                  16
+    # empty?                                      17
+]
+
 
 @MODELS.register_module()
 class Flashocc2Orchestrator(Base3DSegmentor):
@@ -197,17 +218,29 @@ class Flashocc2Orchestrator(Base3DSegmentor):
                 voxels_gt[i].cpu().numpy().astype(np.uint8)
             )
 
+        # 真值鸟瞰图可视化
         mask = voxels_gt != 0
         indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
         selected_voxels_gt = torch.gather(voxels_gt, dim=-1, index=indices).squeeze(-1)
         selected_voxels_gt = selected_voxels_gt.cpu().detach().numpy()
-        selected_voxels_gt = (selected_voxels_gt / np.max(selected_voxels_gt) * 255).astype(np.uint8)
-        print(selected_voxels_gt.shape)
+        selected_voxels_gt[selected_voxels_gt == 255] = 0 
+        
+        palette_np = np.array(palette, dtype=np.uint8)
+        selected_voxels_gt = palette_np[selected_voxels_gt]
 
-        cv2.imwrite(
-            f"./temp/vis.jpg",
-            selected_voxels_gt[0]
-        )
+        cv2.imwrite(f"./temp/vis_gt.jpg", selected_voxels_gt[0])
+
+        # 预测鸟瞰图可视化
+        mask = voxel_pred != 0
+        indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
+        selected_voxels_pred = torch.gather(voxel_pred, dim=-1, index=indices).squeeze(-1)
+        selected_voxels_pred = selected_voxels_pred.cpu().detach().numpy()
+        selected_voxels_pred[selected_voxels_pred == 255] = 0 
+        
+        palette_np = np.array(palette, dtype=np.uint8)
+        selected_voxels_pred = palette_np[selected_voxels_pred]
+
+        cv2.imwrite(f"./temp/vis_pred.jpg", selected_voxels_pred[0])
 
         return batch_data_samples
 
@@ -249,16 +282,16 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         # N = 输入视图数量,例如:输入6视图
         x = batch_inputs
         B, N, C, H, W = batch_inputs.size()  # 1 6 3 900 1600
-        #print("raw_input", B, N, C, H, W)
+        # print("raw_input", B, N, C, H, W)
 
         x = x.reshape(B * N, C, H, W)
-        #print("input", x.shape)  # torch.Size([6, 3, 900, 1600])
+        # print("input", x.shape)  # torch.Size([6, 3, 900, 1600])
 
         x = self.backbone(x)
-        #print("backbone", len(x), x[0].shape)  # 1 torch.Size([6, 2048, 29, 50])
+        # print("backbone", len(x), x[0].shape)  # 1 torch.Size([6, 2048, 29, 50])
 
         x = self.neck(x)
-        #print("neck", len(x), x[0].shape)  # 6 torch.Size([512, 29, 50])
+        # print("neck", len(x), x[0].shape)  # 6 torch.Size([512, 29, 50])
 
         x = torch.stack(x, dim=0)
 

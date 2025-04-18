@@ -11,9 +11,8 @@ from mmdet3d.models.losses import LovaszLoss
 from torch.nn import CrossEntropyLoss
 import torch
 import numpy as np
+import cv2
 from mmdet3d.models import Base3DSegmentor
-
-# from mmengine.model import BaseModel
 from mmdet3d.registry import MODELS
 
 
@@ -35,11 +34,12 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         self.view_transformer = MODELS.build(view_transformer)
         # self.mixter = MODELS.build(mixter)
         self.head = MODELS.build(head)
-        # self.loss_cls = LovaszLoss(
-        #     loss_type="multi_class", per_sample=False, reduction="none"
-        # )
-        self.loss_cls = FocalLoss(gamma=2,task_type='multi-class',num_classes=17)
-        self.loss_depth = torch.nn.CrossEntropyLoss()
+        self.loss_cls = LovaszLoss(
+            loss_type="multi_class", per_sample=False, reduction="none"
+        )
+        # self.loss_cls = FocalLoss(gamma=2,task_type='multi-class',num_classes=17)
+        # self.loss_depth = torch.nn.CrossEntropyLoss()
+        self.deg = [0, 0, 0]
 
     def _forward(
         self, batch_inputs: dict, batch_data_samples: OptSampleList = None
@@ -49,15 +49,12 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         # img: list[torch.Size([6, 3, 900, 1600]),...]
         # occ_200: list[torch.Size([N, 4]),...]
 
-        # print(batch_data_samples[0])
-
         device = batch_inputs["img"][0].device
 
-        img_feats_dict = self.extract_feat(
-            torch.stack(batch_inputs["img"], dim=1)
-        )  # torch.Size([B*N, 512, 29, 50])
+        img_feats_dict = self.extract_feat(torch.stack(batch_inputs["img"], dim=0))
 
-        # cam <-> img <-> ego <-> global
+        # print("img_feats_dict",img_feats_dict["img_feats"].shape) # torch.Size([1, 6, 512, 29, 50])
+
         ego2img = torch.tensor(
             np.array([i.ego2img for i in batch_data_samples]),
             dtype=torch.float32,
@@ -72,37 +69,61 @@ class Flashocc2Orchestrator(Base3DSegmentor):
             np.array([i.ego2global for i in batch_data_samples]),
             dtype=torch.float32,
             device=device,
+        )  # (B, 4, 4)
+        cam2ego = torch.tensor(
+            np.array([i.cam2ego for i in batch_data_samples]),
+            dtype=torch.float32,
+            device=device,
         )  # (B, N, 4, 4)
 
         B = ego2img.shape[0]
         N = ego2img.shape[1]
 
-        # img -> cam, img -> ego == cam -> ego
-        cam2ego = torch.linalg.inv(cam2img) @ torch.linalg.inv(ego2img)
+        # cam -> ego: (B, N, 4, 4) @ (B, N, 4, 4)
+        # cam2ego = torch.linalg.inv(ego2img) @ torch.linalg.inv(cam2img)
 
         # 截取前 3×3 部分 → (B, N, 3, 3)
-        cam2img_3x3 = cam2img[:, :, :3, :3]
+        intrins = cam2img[:, :, :3, :3]
 
         post_rots = (
             torch.eye(3, device=device).unsqueeze(0).unsqueeze(0).repeat(B, N, 1, 1)
         )  # (B, N, 3, 3)
         post_trans = torch.zeros((B, N, 3), device=device)  # (B, N, 3)
         bda_rot = torch.eye(3, device=device).unsqueeze(0).repeat(B, 1, 1)  # (B, 3, 3)
+        ego2global = ego2global.unsqueeze(1).repeat(1, N, 1, 1)
 
-        # print(img_feats_dict["img_feats"].shape)
+        # print("cam2ego",cam2ego,cam2ego.shape)
+        # print("intrins",intrins,intrins.shape)
 
-        # cam -> ego, ego -> global, intrins, post_rots, post_trans, bda_rot
-        bev_feat, _ = self.view_transformer(
+        bev_feat, depth_feat = self.view_transformer(
             [
                 img_feats_dict["img_feats"],
                 cam2ego,
                 ego2global,
-                cam2img_3x3,
+                intrins,
                 post_rots,
                 post_trans,
                 bda_rot,
             ]
         )  # tuple(bev_feat: (B, C, Dy, Dx), depth: (B*N, D, fH, fW))
+
+        for i in range(bev_feat[0].shape[0]):
+            channel = bev_feat[0][i]
+            img_data = channel.detach().cpu().numpy()
+            img_max = np.max(img_data)
+            img_min = np.min(img_data)
+            img_data = (img_data - img_min) / (img_max - img_min)
+            img_data = (img_data * 255).astype(np.uint8)
+            cv2.imwrite(f"./temp/bev_{i}.jpg", img_data)
+
+        for i in range(depth_feat[0].shape[0]):
+            channel = depth_feat[0][i]
+            img_data = channel.detach().cpu().numpy()
+            img_max = np.max(img_data)
+            img_min = np.min(img_data)
+            img_data = (img_data - img_min) / (img_max - img_min)
+            img_data = (img_data * 255).astype(np.uint8)
+            cv2.imwrite(f"./temp/depth_{i}.jpg", img_data)
 
         x = self.head(bev_feat)
 
@@ -130,13 +151,15 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         voxels_gt = torch.flatten(voxels_gt, start_dim=0)  # -1
         batch_outputs = batch_outputs.view(-1, batch_outputs.shape[4])  # -1,Cls
 
+        # print(torch.unique(voxels_gt))
+
         # 过滤掉类别为255的行
         ignore_index = voxels_gt != 255
         voxels_gt = voxels_gt[ignore_index]
         batch_outputs = batch_outputs[ignore_index]
 
-        #batch_outputs = batch_outputs.softmax(dim=-1)
-        #print("compare",batch_outputs,voxels_gt)
+        # batch_outputs = batch_outputs.softmax(dim=-1)
+        # print("compare",batch_outputs,voxels_gt)
 
         lossA = torch.nan_to_num(self.loss_cls(batch_outputs, voxels_gt))
 
@@ -158,19 +181,33 @@ class Flashocc2Orchestrator(Base3DSegmentor):
             [len(batch_data_samples), 200, 200, 16],
         )  # torch.Size([B, 200, 200, 16])
 
-        # voxels_gt = voxels_gt.reshape(len(batch_data_samples),-1)
+        # voxels_gt = torch.flatten(voxels_gt, start_dim=0)  # -1
+        # batch_outputs = batch_outputs.view(-1, batch_outputs.shape[4])  # -1,Cls
 
         for i in range(len(batch_data_samples)):
             batch_data_samples[i].set_data(
                 {
                     "pts_seg_logits": PointData(pts_seg_logits=voxel_logit[i]),
                     "pred_pts_seg": PointData(pts_semantic_mask=voxel_pred[i]),
+                    # "pred_pts_seg": PointData(pts_semantic_mask=voxels_gt[i]), # 输入真值以检查EVAL计算
                 }
             )
             # 设置评估用的 ground truth
             batch_data_samples[i].eval_ann_info["pts_semantic_mask"] = (
                 voxels_gt[i].cpu().numpy().astype(np.uint8)
             )
+
+        mask = voxels_gt != 0
+        indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
+        selected_voxels_gt = torch.gather(voxels_gt, dim=-1, index=indices).squeeze(-1)
+        selected_voxels_gt = selected_voxels_gt.cpu().detach().numpy()
+        selected_voxels_gt = (selected_voxels_gt / np.max(selected_voxels_gt) * 255).astype(np.uint8)
+        print(selected_voxels_gt.shape)
+
+        cv2.imwrite(
+            f"./temp/vis.jpg",
+            selected_voxels_gt[0]
+        )
 
         return batch_data_samples
 
@@ -188,7 +225,7 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         # ratio: downsample_X, downsample_Y, downsample_Z
         # gt_shape: B, X, Y, Z
 
-        #print(gt_occ[0].shape, gt_occ[0].dtype, gt_occ[0].device)
+        # print(gt_occ[0].shape, gt_occ[0].dtype, gt_occ[0].device)
         gt = (
             torch.zeros([gt_shape[0], gt_shape[1], gt_shape[2], gt_shape[3]])
             .to(gt_occ[0].device)
@@ -211,17 +248,20 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         """Extract features of images."""
         # N = 输入视图数量,例如:输入6视图
         x = batch_inputs
-        B, N, C, H, W = x.size()
-        x = x.reshape(B * N, C, H, W) # torch.Size([6, 3, 900, 1600])
+        B, N, C, H, W = batch_inputs.size()  # 1 6 3 900 1600
+        #print("raw_input", B, N, C, H, W)
 
-        #print("input", x.shape)
-        x = self.backbone(x) # torch.Size([6, 2048, 29, 50])
-        #print("backbone", len(x),x[0].shape)
-        x = self.neck(x)[0] # torch.Size([6, 512, 22, 8])
-        #print(x.shape)
+        x = x.reshape(B * N, C, H, W)
+        #print("input", x.shape)  # torch.Size([6, 3, 900, 1600])
 
-        x = x.view(N, B, *x.shape[1:])
+        x = self.backbone(x)
+        #print("backbone", len(x), x[0].shape)  # 1 torch.Size([6, 2048, 29, 50])
+
+        x = self.neck(x)
+        #print("neck", len(x), x[0].shape)  # 6 torch.Size([512, 29, 50])
+
+        x = torch.stack(x, dim=0)
 
         return {
-            "img_feats": x,  # torch.Size([B, N, 512, 29, 50])
+            "img_feats": x,
         }

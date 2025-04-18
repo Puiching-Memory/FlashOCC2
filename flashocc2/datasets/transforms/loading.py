@@ -155,24 +155,25 @@ class BEVLoadMultiViewImageFromFiles(LoadMultiViewImageFromFiles):
                 - scale_factor (float): Scale factor.
                 - img_norm_cfg (dict): Normalization configuration of images.
         """
-        filename, cam2img, lidar2cam, lidar2img, ego2img = [], [], [], [], []
+        filename, cam2img, lidar2cam, lidar2img, ego2img, cam2ego = [], [], [], [], [], []
         for _, cam_item in results['images'].items():
             filename.append(cam_item['img_path'])
             lidar2cam.append(cam_item['lidar2cam'])
-            
-            ego2cam_array = np.linalg.inv(np.array(cam_item['cam2ego'],dtype=np.float64))
+            ego2cam = np.linalg.inv(np.array(cam_item['cam2ego'],dtype=np.float64))
+            cam2ego.append(np.array(cam_item['cam2ego'],dtype=np.float64))
             lidar2cam_array = np.array(cam_item['lidar2cam'],dtype=np.float64)
             cam2img_array = np.eye(4).astype(np.float64)
             cam2img_array[:3, :3] = np.array(cam_item['cam2img'],dtype=np.float64)
             cam2img.append(cam2img_array)
             lidar2img.append(cam2img_array @ lidar2cam_array)
-            ego2img.append(cam2img_array @ ego2cam_array)
+            ego2img.append(cam2img_array @ ego2cam)
 
         results['img_path'] = filename
         results['cam2img'] = np.stack(cam2img, axis=0)
         results['lidar2cam'] = np.stack(lidar2cam, axis=0)
         results['lidar2img'] = np.stack(lidar2img, axis=0)
         results['ego2img'] = np.stack(ego2img, axis=0)
+        results['cam2ego'] = np.stack(cam2ego, axis=0)
         results['ori_cam2img'] = copy.deepcopy(results['cam2img'])
 
         # img is of shape (h, w, c, num_views)

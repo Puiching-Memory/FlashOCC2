@@ -53,14 +53,13 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         self.backbone = MODELS.build(backbone)
         self.neck = MODELS.build(neck)
         self.view_transformer = MODELS.build(view_transformer)
-        # self.mixter = MODELS.build(mixter)
+        self.mixter = MODELS.build(mixter)
         self.head = MODELS.build(head)
         self.loss_cls = LovaszLoss(
             loss_type="multi_class", per_sample=False, reduction="none"
         )
         # self.loss_cls = FocalLoss(gamma=2,task_type='multi-class',num_classes=17)
         # self.loss_depth = torch.nn.CrossEntropyLoss()
-        self.deg = [0, 0, 0]
 
     def _forward(
         self, batch_inputs: dict, batch_data_samples: OptSampleList = None
@@ -146,7 +145,11 @@ class Flashocc2Orchestrator(Base3DSegmentor):
             img_data = (img_data * 255).astype(np.uint8)
             cv2.imwrite(f"./temp/depth_{i}.jpg", img_data)
 
-        x = self.head(bev_feat)
+        print("bev_feat",bev_feat.shape)
+        x = self.mixter(bev_feat)[0]
+        print(x.shape)
+
+        x = self.head(x)
 
         return x
 
@@ -169,10 +172,33 @@ class Flashocc2Orchestrator(Base3DSegmentor):
             [len(batch_data_samples), 200, 200, 16],
         )  # torch.Size([B, 200, 200, 16])
 
+        # 真值鸟瞰图可视化
+        mask = voxels_gt != 0
+        indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
+        selected_voxels_gt = torch.gather(voxels_gt, dim=-1, index=indices).squeeze(-1)
+        selected_voxels_gt = selected_voxels_gt.cpu().detach().numpy()
+        selected_voxels_gt[selected_voxels_gt == 255] = 0 
+        
+        palette_np = np.array(palette, dtype=np.uint8)
+        selected_voxels_gt = palette_np[selected_voxels_gt]
+
+        cv2.imwrite(f"./temp/vis_gt.jpg", selected_voxels_gt[0])
+
+        # 预测鸟瞰图可视化
+        voxel_pred = batch_outputs.argmax(dim=-1)
+        mask = voxel_pred != 0
+        indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
+        selected_voxels_pred = torch.gather(voxel_pred, dim=-1, index=indices).squeeze(-1)
+        selected_voxels_pred = selected_voxels_pred.cpu().detach().numpy()
+        selected_voxels_pred[selected_voxels_pred == 255] = 0 
+        
+        palette_np = np.array(palette, dtype=np.uint8)
+        selected_voxels_pred = palette_np[selected_voxels_pred]
+
+        cv2.imwrite(f"./temp/vis_pred.jpg", selected_voxels_pred[0])
+
         voxels_gt = torch.flatten(voxels_gt, start_dim=0)  # -1
         batch_outputs = batch_outputs.view(-1, batch_outputs.shape[4])  # -1,Cls
-
-        # print(torch.unique(voxels_gt))
 
         # 过滤掉类别为255的行
         ignore_index = voxels_gt != 255

@@ -64,12 +64,22 @@ model = dict(
             "z": [-1, 5.4, 6.4],
             "depth": [1.0, 45.0, 0.5],
         },
-        input_size = (900,1600),
+        input_size=(900, 1600),
         downsample=32,
-        in_channels= 512,
-        out_channels = 128,
+        in_channels=512,
+        out_channels=64,
     ),
-    mixter=None,
+    mixter=dict(
+        type="mmdet.ResNet",
+        depth=50,
+        strides=[1,1,1,1],
+        out_indices=(3,),
+        in_channels=64,
+        style="pytorch",
+        deep_stem=False,
+        dilations=(1, 1, 2, 4),
+        #init_cfg=dict(type="Pretrained", checkpoint="torchvision://resnet50"),
+    ),
     head=dict(
         type="FlashOcc2Head",
         channels=0,
@@ -117,9 +127,9 @@ train_pipeline = [
             # "ori_shape",  # 不存在
             "ori_cam2img",
             # "resize_img_shape",  # 不存在
-            "lidar2cam", # 不存在
+            "lidar2cam",  # 不存在
             "lidar2img",
-            "cam2ego"
+            "cam2ego",
         ],
     ),
 ]
@@ -155,9 +165,9 @@ val_pipeline = [
             # "ori_shape",  # 不存在
             "ori_cam2img",
             # "resize_img_shape",  # 不存在
-            "lidar2cam", # 不存在
+            "lidar2cam",  # 不存在
             "lidar2img",
-            "cam2ego"
+            "cam2ego",
         ],
     ),
 ]
@@ -174,7 +184,7 @@ train_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        indices=100,  # 测试用,mini
+        #indices=100,  # 测试用,mini
         ann_file="nuscenes_infos_occfusion_train.pkl",
         pipeline=train_pipeline,
         test_mode=False,
@@ -191,7 +201,7 @@ val_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        indices=100,  # 测试用,mini
+        #indices=100,  # 测试用,mini
         ann_file="nuscenes_infos_occfusion_val.pkl",
         pipeline=val_pipeline,
         test_mode=True,

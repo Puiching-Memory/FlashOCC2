@@ -12,8 +12,18 @@ class FlashOcc2Head(BaseModule):
         super(FlashOcc2Head, self).__init__()
 
         self.head = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear"),
             nn.Conv2d(
-                128,
+                2048,
+                512,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+            ),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=2, mode="bilinear"),
+            nn.Conv2d(
+                512,
                 16 * 17,
                 kernel_size=3,
                 stride=1,
@@ -30,17 +40,16 @@ class FlashOcc2Head(BaseModule):
     def forward(self, x):
         # input: bev_feat: (B, C, Dy, Dx)
         
-        # torch.Size([1, 128, 200, 200])
         B, C, W, H = x.shape
-        #print("1", x.shape)
+        print("A", x.shape)
 
         x = self.head(x).permute(0, 3, 2, 1).contiguous()
-        #print("2", x.shape) # B, Dz*cls, 200, 200 -> B, 200, 200, Dz*cls
+        print("B", x.shape) # B, Dz*cls, 200, 200 -> B, 200, 200, Dz*cls
 
         x = self.predicter(x)
-        #print("3", x.shape)
+        print("C", x.shape)
 
-        x = x.reshape(B, W, H, 16, 17)
+        x = x.reshape(B, W*4, H*4, 16, 17)
 
         # output:torch.Size([1, 200, 200, 16, 17]) B, x, y, z, cls
         return x

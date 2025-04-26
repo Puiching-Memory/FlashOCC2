@@ -16,42 +16,13 @@ pip install -e . -v --no-build-isolation --force-reinstall
 
 ## 准备数据
 
+BEVdet
 
-### OpenOccupancy
-
-官方数据集文档:
-[https://github.com/JeffWang987/OpenOccupancy/blob/main/docs/prepare_data.md](https://github.com/JeffWang987/OpenOccupancy/blob/main/docs/prepare_data.md)
-
-下载:预生成pkl
-[https://github.com/JeffWang987/OpenOccupancy/releases/tag/train_pkl](https://github.com/JeffWang987/OpenOccupancy/releases/tag/train_pkl)
-
-[https://github.com/JeffWang987/OpenOccupancy/releases/tag/val_pkl](https://github.com/JeffWang987/OpenOccupancy/releases/tag/val_pkl)
-
-下载:OCC数据
-
-| name          | 谷歌云盘                                                                                  | 百度云                                               | 大小  |
-| ------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----- |
-| trainval-v0.1 | [Google](https://drive.google.com/file/d/1vTbgddMzUN6nLyWSsCZMb9KwihS7nPoH/view?usp=sharing) | [25UE](https://pan.baidu.com/s/1Wu1EYa7vrh8KS8VPTIny5Q) | ~=5GB |
+升级到最新格式
 
 ```
-flashocc2/
-├── data/
-    ├── depth_gt/ (generate by create_data_OpenOccupancy.py) (204894) (26G)
-    ├── nuScenes-Occupancy/ (download OCC) (34149) (135G)
-    ├── nuscenes/
-    |    ├── maps/
-    |    ├── samples/
-    |    ├── sweeps/
-    |    ├── lidarseg/
-    |    ├── v1.0-test/
-    |    ├── v1.0-trainval/
-    |    ├── nuscenes_occ_infos_train.pkl/
-    |    ├── nuscenes_occ_infos_val.pkl/
-  
+python tools/dataset_converters/update_infos_to_v2.py --dataset nuscenes --pkl-path data/nuscenes/bevdetv2-nuscenes_infos_val.pkl --out-dir ./
+python tools/dataset_converters/update_infos_to_v2.py --dataset nuscenes --pkl-path data/nuscenes/bevdetv2-nuscenes_infos_train.pkl --out-dir ./
 ```
 
-预生成深度图:
-
-```
-python ./tools/create_data_OpenOccupancy.py
-```
+然后手动替换掉原始pkl文件

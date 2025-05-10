@@ -64,10 +64,9 @@ class Flashocc2Orchestrator(Base3DSegmentor):
     def _forward(
         self, batch_inputs: dict, batch_data_samples: OptSampleList = None
     ) -> torch.Tensor:
-
-        # batch_inputs: dict_keys(['img', 'occ_200'])
-        # img: list[torch.Size([6, 3, 900, 1600]),...]
-        # occ_200: list[torch.Size([N, 4]),...]
+        # batch_inputs: dict_keys(['img', 'voxel_semantics', 'intrinsics', 'extrinsic', 'cam2ego', 'ego2global'])
+        #   img: list[torch.Size([6, 3, 900, 1600]),...]
+        # batch_data_samples: dict_keys(['gt_pts_seg', 'gt_instances_3d', 'gt_instances', 'eval_ann_info'])
 
         device = batch_inputs["img"][0].device
 
@@ -75,35 +74,26 @@ class Flashocc2Orchestrator(Base3DSegmentor):
 
         # print("img_feats_dict",img_feats_dict["img_feats"].shape) # torch.Size([1, 6, 512, 29, 50])
 
-        ego2img = torch.tensor(
-            np.array([i.ego2img for i in batch_data_samples]),
-            dtype=torch.float32,
-            device=device,
-        )  # (B, N, 4, 4)
-        cam2img = torch.tensor(
-            np.array([i.cam2img for i in batch_data_samples]),
-            dtype=torch.float32,
-            device=device,
-        )  # (B, N, 4, 4)
         ego2global = torch.tensor(
-            np.array([i.ego2global for i in batch_data_samples]),
+            np.array(batch_inputs["ego2global"]),
             dtype=torch.float32,
             device=device,
         )  # (B, 4, 4)
         cam2ego = torch.tensor(
-            np.array([i.cam2ego for i in batch_data_samples]),
+            np.array(batch_inputs["cam2ego"]),
+            dtype=torch.float32,
+            device=device,
+        )  # (B, N, 4, 4)
+        intrinsics = torch.tensor(
+            np.array(batch_inputs["intrinsics"]),
             dtype=torch.float32,
             device=device,
         )  # (B, N, 4, 4)
 
-        B = ego2img.shape[0]
-        N = ego2img.shape[1]
+        B = cam2ego.shape[0]
+        N = cam2ego.shape[1]
 
-        # cam -> ego: (B, N, 4, 4) @ (B, N, 4, 4)
-        # cam2ego = torch.linalg.inv(ego2img) @ torch.linalg.inv(cam2img)
-
-        # 截取前 3×3 部分 → (B, N, 3, 3)
-        intrins = cam2img[:, :, :3, :3]
+        cam2ego = torch.inverse(cam2ego)
 
         post_rots = (
             torch.eye(3, device=device).unsqueeze(0).unsqueeze(0).repeat(B, N, 1, 1)
@@ -112,19 +102,16 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         bda_rot = torch.eye(3, device=device).unsqueeze(0).repeat(B, 1, 1)  # (B, 3, 3)
         ego2global = ego2global.unsqueeze(1).repeat(1, N, 1, 1)
 
-        # print("cam2ego",cam2ego,cam2ego.shape)
-        # print("intrins",intrins,intrins.shape)
-
-        bev_feat, depth_feat = self.view_transformer(
-            [
+        bev_feat, depth_feat = self.view_transformer(prepare_inputs(
+            [ 
                 img_feats_dict["img_feats"],
                 cam2ego,
                 ego2global,
-                intrins,
+                intrinsics,
                 post_rots,
                 post_trans,
                 bda_rot,
-            ]
+            ])
         )  # tuple(bev_feat: (B, C, Dy, Dx), depth: (B*N, D, fH, fW))
 
         for i in range(bev_feat[0].shape[0]):
@@ -157,27 +144,28 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         self, batch_inputs: dict, batch_data_samples: SampleList
     ) -> Dict[str, torch.Tensor]:
         """Calculate losses from a batch of inputs and data samples."""
-
-        # batch_inputs: dict_keys(['img', 'occ_200'])
-        # img: list[torch.Size([6, 3, 900, 1600]),...]
-        # occ_200: list[torch.Size([N, 4]),...]
+        # batch_inputs: dict_keys(['img', 'voxel_semantics', 'intrinsics', 'extrinsic', 'cam2ego', 'ego2global'])
+        #   img: list[torch.Size([6, 3, 900, 1600]),...]
+        # batch_data_samples: dict_keys(['gt_pts_seg', 'gt_instances_3d', 'gt_instances', 'eval_ann_info'])
 
         batch_outputs = self._forward(
             batch_inputs, batch_data_samples
         )  # B, X, Y, Z, Cls (B,200,200,16,17)
 
-        voxels_gt = self.multiscale_supervision(
-            batch_inputs["occ_200"],
-            [1, 1, 1],
-            [len(batch_data_samples), 200, 200, 16],
-        )  # torch.Size([B, 200, 200, 16])
+        # voxels_gt = self.multiscale_supervision(
+        #     batch_inputs["occ_200"],
+        #     [1, 1, 1],
+        #     [len(batch_data_samples), 200, 200, 16],
+        # )  # torch.Size([B, 200, 200, 16])
+
+        voxels_gt = torch.stack(batch_inputs["voxel_semantics"],dim=0)
 
         # 真值鸟瞰图可视化
         mask = voxels_gt != 0
         indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
         selected_voxels_gt = torch.gather(voxels_gt, dim=-1, index=indices).squeeze(-1)
         selected_voxels_gt = selected_voxels_gt.cpu().detach().numpy()
-        selected_voxels_gt[selected_voxels_gt == 255] = 0 
+        selected_voxels_gt[selected_voxels_gt == 17] = 0 
         
         palette_np = np.array(palette, dtype=np.uint8)
         selected_voxels_gt = palette_np[selected_voxels_gt]
@@ -190,7 +178,7 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
         selected_voxels_pred = torch.gather(voxel_pred, dim=-1, index=indices).squeeze(-1)
         selected_voxels_pred = selected_voxels_pred.cpu().detach().numpy()
-        selected_voxels_pred[selected_voxels_pred == 255] = 0 
+        selected_voxels_pred[selected_voxels_pred == 17] = 0 
         
         palette_np = np.array(palette, dtype=np.uint8)
         selected_voxels_pred = palette_np[selected_voxels_pred]
@@ -200,8 +188,8 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         voxels_gt = torch.flatten(voxels_gt, start_dim=0)  # -1
         batch_outputs = batch_outputs.view(-1, batch_outputs.shape[4])  # -1,Cls
 
-        # 过滤掉类别为255的行
-        ignore_index = voxels_gt != 255
+        # 过滤掉类别为17的行
+        ignore_index = voxels_gt != 17
         voxels_gt = voxels_gt[ignore_index]
         batch_outputs = batch_outputs[ignore_index]
 
@@ -222,11 +210,12 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         voxel_logit = batch_outputs.reshape(len(batch_data_samples), 200, 200, 16, 17)
         voxel_pred = torch.argmax(voxel_logit, dim=-1)
 
-        voxels_gt = self.multiscale_supervision(
-            batch_inputs["occ_200"],
-            [1, 1, 1],
-            [len(batch_data_samples), 200, 200, 16],
-        )  # torch.Size([B, 200, 200, 16])
+        # voxels_gt = self.multiscale_supervision(
+        #     batch_inputs["occ_200"],
+        #     [1, 1, 1],
+        #     [len(batch_data_samples), 200, 200, 16],
+        # )  # torch.Size([B, 200, 200, 16])
+        voxels_gt = torch.stack(batch_inputs["voxel_semantics"],dim=0)
 
         # voxels_gt = torch.flatten(voxels_gt, start_dim=0)  # -1
         # batch_outputs = batch_outputs.view(-1, batch_outputs.shape[4])  # -1,Cls
@@ -249,7 +238,7 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
         selected_voxels_gt = torch.gather(voxels_gt, dim=-1, index=indices).squeeze(-1)
         selected_voxels_gt = selected_voxels_gt.cpu().detach().numpy()
-        selected_voxels_gt[selected_voxels_gt == 255] = 0 
+        selected_voxels_gt[selected_voxels_gt == 17] = 0 
         
         palette_np = np.array(palette, dtype=np.uint8)
         selected_voxels_gt = palette_np[selected_voxels_gt]
@@ -261,7 +250,7 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         indices = torch.argmax(mask.long(), dim=-1, keepdim=True)
         selected_voxels_pred = torch.gather(voxel_pred, dim=-1, index=indices).squeeze(-1)
         selected_voxels_pred = selected_voxels_pred.cpu().detach().numpy()
-        selected_voxels_pred[selected_voxels_pred == 255] = 0 
+        selected_voxels_pred[selected_voxels_pred == 17] = 0 
         
         palette_np = np.array(palette, dtype=np.uint8)
         selected_voxels_pred = palette_np[selected_voxels_pred]
@@ -324,3 +313,23 @@ class Flashocc2Orchestrator(Base3DSegmentor):
         return {
             "img_feats": x,
         }
+
+def prepare_inputs(inputs):
+    # split the inputs into each frame
+    assert len(inputs) == 7
+    B, N, C, H, W = inputs[0].shape
+    imgs, sensor2egos, ego2globals, intrins, post_rots, post_trans, bda = \
+        inputs
+
+    sensor2egos = sensor2egos.view(B, N, 4, 4)
+    ego2globals = ego2globals.view(B, N, 4, 4)
+
+    # calculate the transformation from adj sensor to key ego
+    keyego2global = ego2globals[:, 0,  ...].unsqueeze(1)    # (B, 1, 4, 4)
+    global2keyego = torch.inverse(keyego2global.double())   # (B, 1, 4, 4)
+    sensor2keyegos = \
+        global2keyego @ ego2globals.double() @ sensor2egos.double()     # (B, N_views, 4, 4)
+    sensor2keyegos = sensor2keyegos.float()
+
+    return [imgs, sensor2keyegos, ego2globals, intrins,
+            post_rots, post_trans, bda]

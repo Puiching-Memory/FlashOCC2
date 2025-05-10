@@ -1,7 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from typing import Dict, Optional
-
-import mmcv
+from tqdm import tqdm
 import numpy as np
 from mmengine.logging import MMLogger
 
@@ -50,20 +49,29 @@ class EvalMetric(SegMetric):
         classes_num = len(label2cat)
         ret_dict = dict()
         results = []
-        for i in range(len(gt_labels)):
-            gt_i, pred_i = gt_labels[i].astype(np.int64), seg_preds[i].astype(np.int64)
+        for i in tqdm(range(len(gt_labels))):
+            gt_i = gt_labels[i].astype(np.int64)
+            pred_i = seg_preds[i].astype(np.int64)
             mask = (gt_i != ignore_index)
+            gt = gt_i[mask]
+            pred = pred_i[mask]
+
+            non_zero_gt = (gt != 0)
+            non_zero_pred = (pred != 0)
+            tp_j0 = np.sum(non_zero_gt & non_zero_pred)
+            p_j0 = np.sum(non_zero_gt)
+            g_j0 = np.sum(non_zero_pred)
+
+            tp_all = np.bincount(gt[gt == pred], minlength=classes_num)
+            p_all = np.bincount(gt, minlength=classes_num)
+            g_all = np.bincount(pred, minlength=classes_num)
+
             score = np.zeros((classes_num, 3))
-            for j in range(classes_num):
-                if j == 0: #class 0 for geometry IoU
-                    score[j][0] += ((gt_i[mask] != 0) * (pred_i[mask] != 0)).sum()
-                    score[j][1] += (gt_i[mask] != 0).sum()
-                    score[j][2] += (pred_i[mask] != 0).sum()
-                else:
-                    score[j][0] += ((gt_i[mask] == j) * (pred_i[mask] == j)).sum()
-                    score[j][1] += (gt_i[mask] == j).sum()
-                    score[j][2] += (pred_i[mask] == j).sum()
-            
+            score[0] = [tp_j0, p_j0, g_j0]
+            score[1:,0] = tp_all[1:]
+            score[1:,1] = p_all[1:]
+            score[1:,2] = g_all[1:]
+
             results.append(score)
             
         results = np.stack(results, axis=0).mean(0)

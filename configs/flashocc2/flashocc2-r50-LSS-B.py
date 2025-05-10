@@ -1,4 +1,4 @@
-_base_ = ["../_base_/default_runtime.py"]  # "../_base_/datasets/nus-3d.py",
+_base_ = ["../_base_/default_runtime.py"]
 
 custom_imports = dict(
     imports=[
@@ -9,30 +9,6 @@ custom_imports = dict(
 )
 
 # load_from = 'ckpt/r101_dcn_fcos3d_pretrain.pth'
-
-dataset_type = "NuScenesSegDataset"
-data_root = "data/nuscenes"
-data_prefix = dict(
-    pts="samples/LIDAR_TOP",
-    pts_semantic_mask="lidarseg/v1.0-trainval",
-    CAM_FRONT="samples/CAM_FRONT",
-    CAM_FRONT_LEFT="samples/CAM_FRONT_LEFT",
-    CAM_FRONT_RIGHT="samples/CAM_FRONT_RIGHT",
-    CAM_BACK="samples/CAM_BACK",
-    CAM_BACK_RIGHT="samples/CAM_BACK_RIGHT",
-    CAM_BACK_LEFT="samples/CAM_BACK_LEFT",
-)
-
-input_modality = dict(use_lidar=False, use_camera=True)
-backend_args = None
-
-point_cloud_range = [-50.0, -50.0, -5.0, 50.0, 50.0, 3.0]
-grid_size_vt = [100, 100, 8]
-num_points_per_voxel = 35
-nbr_class = 17
-use_lidar = False
-use_radar = False
-use_occ3d = False
 
 model = dict(
     type="Flashocc2Orchestrator",
@@ -59,8 +35,8 @@ model = dict(
     view_transformer=dict(
         type="LSSViewTransformer",
         grid_config={
-            "x": [-50, 50, 0.5],
-            "y": [-50, 50, 0.5],
+            "x": [-40, 40, 0.4],
+            "y": [-40, 40, 0.4],
             "z": [-1, 5.4, 6.4],
             "depth": [1.0, 45.0, 0.5],
         },
@@ -72,18 +48,18 @@ model = dict(
     mixter=dict(
         type="mmdet.ResNet",
         depth=50,
-        strides=[1,1,1,1],
+        strides=[1, 1, 1, 1],
         out_indices=(3,),
         in_channels=64,
         style="pytorch",
         deep_stem=False,
         dilations=(1, 1, 2, 4),
-        #init_cfg=dict(type="Pretrained", checkpoint="torchvision://resnet50"),
+        # init_cfg=dict(type="Pretrained", checkpoint="torchvision://resnet50"),
     ),
     head=dict(
         type="FlashOcc2Head",
         channels=0,
-        num_classes=nbr_class,
+        num_classes=17,
     ),
 )
 
@@ -97,82 +73,79 @@ train_transforms = [
 ]
 
 train_pipeline = [
-    dict(
-        type="BEVLoadMultiViewImageFromFiles",
-        to_float32=False,
-        color_type="unchanged",
+    dict(  # 载入多视角图像
+        type="LoadMultiViewImageFromFiles",
+        to_float32=True,
         num_views=6,
-        backend_args=backend_args,
     ),
-    dict(type="LoadOccupancy"),
-    dict(
+    dict(  # 载入3D标注
         type="LoadAnnotations3D",
-        with_bbox_3d=False,
-        with_label_3d=False,
-        with_seg_3d=True,
+        with_bbox_3d=True,
+        with_label_3d=True,
         with_attr_label=False,
-        seg_3d_dtype="np.uint8",
     ),
-    dict(type="MultiViewWrapper", transforms=train_transforms),
-    dict(type="SegLabelMapping"),
+    dict(type="LoadOccGTFromFile"),  # 载入OCC真值
     dict(
-        type="Custom3DPack",
-        keys=["img", "occ_200"],
-        meta_keys=[
-            "ego2img",
-            "ego2global",
-            # "cam2global",  # 不存在
-            "cam2img",
-            # "img_shape",  # 不存在
-            # "ori_shape",  # 不存在
-            "ori_cam2img",
-            # "resize_img_shape",  # 不存在
-            "lidar2cam",  # 不存在
-            "lidar2img",
+        type="CustomPack3DDetInputs",  # 打包keys,基本是keys的重新分配与过滤
+        keys=[
+            "img",
+            "gt_bboxes_3d",  # must include
+            "gt_labels_3d",  # # must include
+            "voxel_semantics",
+            "mask_camera",
+            "intrinsics",
+            "extrinsic",
             "cam2ego",
+            "ego2global",
         ],
     ),
 ]
 
 val_pipeline = [
-    dict(
-        type="BEVLoadMultiViewImageFromFiles",
-        to_float32=False,
-        color_type="unchanged",
+    dict(  # 载入多视角图像
+        type="LoadMultiViewImageFromFiles",
+        to_float32=True,
         num_views=6,
-        backend_args=backend_args,
     ),
-    dict(type="LoadOccupancy"),
-    dict(
+    dict(  # 载入3D标注
         type="LoadAnnotations3D",
-        with_bbox_3d=False,
-        with_label_3d=False,
-        with_seg_3d=True,
+        with_bbox_3d=True,
+        with_label_3d=True,
         with_attr_label=False,
-        seg_3d_dtype="np.uint8",
     ),
-    dict(type="MultiViewWrapper", transforms=train_transforms),
-    dict(type="SegLabelMapping"),
+    dict(type="LoadOccGTFromFile"),  # 载入OCC真值
     dict(
-        type="Custom3DPack",
-        keys=["img", "occ_200"],
-        meta_keys=[
-            "ego2img",
-            "ego2global",
-            # "cam2global",  # 不存在
-            "cam2img",
-            # "img_shape",  # 不存在
-            # "ori_shape",  # 不存在
-            "ori_cam2img",
-            # "resize_img_shape",  # 不存在
-            "lidar2cam",  # 不存在
-            "lidar2img",
+        type="CustomPack3DDetInputs",  # 打包keys,基本是keys的重新分配与过滤
+        keys=[
+            "img",
+            "gt_bboxes_3d",  # must include
+            "gt_labels_3d",  # # must include
+            "voxel_semantics",
+            "mask_camera",
+            "intrinsics",
+            "extrinsic",
             "cam2ego",
+            "ego2global",
         ],
     ),
 ]
 
 test_pipeline = val_pipeline
+
+dataset_type = "NuScenesDatasetOccupancy"
+data_root = "data/nuscenes"
+data_prefix = dict(
+    CAM_FRONT="samples/CAM_FRONT",
+    CAM_FRONT_LEFT="samples/CAM_FRONT_LEFT",
+    CAM_FRONT_RIGHT="samples/CAM_FRONT_RIGHT",
+    CAM_BACK="samples/CAM_BACK",
+    CAM_BACK_RIGHT="samples/CAM_BACK_RIGHT",
+    CAM_BACK_LEFT="samples/CAM_BACK_LEFT",
+)
+modality = dict(
+    use_camera=True,
+    use_lidar=False,
+)
 
 train_dataloader = dict(
     batch_size=1,
@@ -184,8 +157,9 @@ train_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        #indices=100,  # 测试用,mini
-        ann_file="nuscenes_infos_occfusion_train.pkl",
+        modality=modality,
+        # indices=100,  # 测试用,mini
+        ann_file="bevdetv2-nuscenes_infos_train.pkl",
         pipeline=train_pipeline,
         test_mode=False,
     ),
@@ -201,8 +175,9 @@ val_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=data_prefix,
-        #indices=100,  # 测试用,mini
-        ann_file="nuscenes_infos_occfusion_val.pkl",
+        modality=modality,
+        # indices=100,  # 测试用,mini
+        ann_file="bevdetv2-nuscenes_infos_val.pkl",
         pipeline=val_pipeline,
         test_mode=True,
     ),

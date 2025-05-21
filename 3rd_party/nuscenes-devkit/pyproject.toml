@@ -1,0 +1,43 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools==70.2.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nuscenes-devkit"
+version = "1.1.11"
+authors = [
+    { name = "Holger Caesar, Oscar Beijbom, Qiang Xu, Varun Bankiti, Alex H. Lang, Sourabh Vora, Venice Erin Liong, Sergi Widjaja, Kiwoo Shin, Caglayan Dicle, Freddy Boulton, Whye Kit Fong, Asha Asvathaman, Lubing Zhou ,et al." },
+]
+description = "The official devkit of the nuScenes dataset (www.nuscenes.org)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: Apache Software License"
+]
+
+dependencies = [
+    "cachetools==5.5.2",
+    "descartes==1.1.0",
+    "fire==0.7.0",
+    "matplotlib==3.10.3",
+    "numpy==2.1.2",
+    "opencv-python==4.11.0.86",
+    "Pillow==11.0.0",
+    "pyquaternion==0.9.9",
+    "scikit-learn==1.6.1",
+    "scipy==1.15.3",
+    "Shapely==2.1.1",
+    "tqdm==4.67.1",
+    "parameterized==0.9.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/nutonomy/nuscenes-devkit"
+
+[tool.setuptools]
+package-dir = { "" = "python-sdk" }   # 指定源码根目录
+packages.find.namespaces = false  # 禁用命名空间

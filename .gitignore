@@ -1,6 +1,6 @@
 __pycache__/
 *.pkl
-data/
+dataset/
 *.egg-info
 *.so
 *.run
@@ -14,3 +14,6 @@ work_dirs/
 dist/
 _*.py
 temp/
+checkpoint/
+Python-3.13.3/
+profiler.html

@@ -1,9 +1,7 @@
 {
     "exclude": [
-      "data/",
-      "work_dirs/",
-      "ckpt/",
+      "dataset/",
       "docs/",
-      "figs/"
+      "Python-3.13.3/",
     ]
   }

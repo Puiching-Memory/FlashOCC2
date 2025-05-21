@@ -6,7 +6,7 @@ INFO: This repository is an engineering-oriented project and may differ from you
 
 ## 计划
 
-* [X] mm系列依赖更新至最新版
+* [ ] 移除mm架构依赖
 * [ ] 数据集加载器重构
 * [ ] 可视化
 * [ ] 评分

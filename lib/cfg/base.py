@@ -2,6 +2,7 @@ import abc
 import torch
 import torch.utils.data as data
 from torch.utils.data import DataLoader
+from torchdata.nodes import SamplerWrapper, ParallelMapper, Loader, pin_memory
 import numpy as np
 from typing import Optional, Tuple, Union, List, Dict, Any
 
@@ -33,17 +34,14 @@ class SchedulerBase(metaclass=abc.ABCMeta):
 class DataSetBase(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
-    def get_train_loader(self) -> DataLoader: ...
+    def get_train_loader(self) -> Loader: ...
 
     @abc.abstractmethod
-    def get_val_loader(self) -> DataLoader: ...
+    def get_val_loader(self) -> Loader: ...
 
     @abc.abstractmethod
-    def get_test_loader(self) -> DataLoader: ...
-
-    @abc.abstractmethod
-    def get_bath_size(self) -> int: ...
-
+    def get_test_loader(self) -> Loader: ...
+    
     @abc.abstractmethod
     def get_num_workers(self) -> int: ...
 

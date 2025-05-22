@@ -72,7 +72,9 @@ python hello_flashocc2.py
 
 https://github.com/OpenDriveLab/OccNet?tab=readme-ov-file#openocc-dataset
 
+你可以选择从opendatalab或googleDrive下载数据集,但是需要注意的是,opendatalab上缺少了nuscenes_infos_test_occ.pkl文件
 https://opendatalab.com/OpenDriveLab/CVPR24-Occ-Flow-Challenge
+https://drive.google.com/drive/folders/1lpqjXZRKEvNHFhsxTf0MOE13AZ3q4bTq
 
 ```bash
 openxlab dataset get --dataset-repo OpenDriveLab/CVPR24-Occ-Flow-Challenge --target-path ./dataset/
@@ -88,6 +90,7 @@ rm dataset/infos.zip
 rm dataset/openocc_v2.1.zip
 ```
 
+最终，文件结构如下:
 ```
 nuscenes
 ├── maps

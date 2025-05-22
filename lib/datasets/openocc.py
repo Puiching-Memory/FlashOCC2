@@ -1,4 +1,7 @@
+import sys
 import os
+sys.path.append(os.path.abspath("./"))
+
 import numpy as np
 import torch
 import torch.utils.data
@@ -6,11 +9,10 @@ from torch.utils.data import RandomSampler, DistributedSampler
 from torchdata.nodes import SamplerWrapper, ParallelMapper, Loader, pin_memory
 import torchvision
 from torchvision.transforms import v2
-import sys
 import pickle
 from pathlib import Path
 
-sys.path.append(str(Path().resolve()))
+from lib.utils.logger import logger
 
 class datasetOpenOCC(torch.utils.data.Dataset):
     """
@@ -35,8 +37,9 @@ class datasetOpenOCC(torch.utils.data.Dataset):
         self.split = split
 
         # 载入数据集
-        assert split in ["train", "val"]
+        assert split in ["train", "val", "test"]
 
+        logger.debug(f"Loading {Path(root_dir) / f'nuscenes_infos_{split}_occ.pkl'} ...")
         with open(Path(root_dir) / f"nuscenes_infos_{split}_occ.pkl","rb") as f:
             self.data = pickle.load(f)
         

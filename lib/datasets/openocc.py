@@ -6,18 +6,29 @@ from torch.utils.data import RandomSampler, DistributedSampler
 from torchdata.nodes import SamplerWrapper, ParallelMapper, Loader, pin_memory
 import torchvision
 from torchvision.transforms import v2
-import time
 import sys
 import pickle
 from pathlib import Path
-import cv2
 
 sys.path.append(str(Path().resolve()))
 
 class datasetOpenOCC(torch.utils.data.Dataset):
     """
-    doc: https://github.com/OpenDriveLab/OccNet?tab=readme-ov-file#openocc-dataset
+    ### documentation
+    https://github.com/OpenDriveLab/OccNet?tab=readme-ov-file#openocc-dataset
 
+    ### path structure
+    ```
+    nuscenes
+    ├── maps
+    ├── nuscenes_infos_train_occ.pkl
+    ├── nuscenes_infos_val_occ.pkl
+    ├── nuscenes_infos_test_occ.pkl
+    ├── openocc_v2
+    ├── samples
+    ├── v1.0-test
+    └── v1.0-trainval
+    ```
     """
     def __init__(self, root_dir:str, split:str)->None:
         self.root_dir = root_dir
@@ -112,8 +123,19 @@ class datasetOpenOCC(torch.utils.data.Dataset):
         return (
             images,
             (
+                sensor2ego_translation,
+                sensor2ego_rotation,
+                cam_ego2global_translation,
+                cam_ego2global_rotation,
+                sensor2lidar_rotation,
+                sensor2lidar_translation,
+                cam_intrinsic,
             ),
             (
+                lidar2ego_translation,
+                lidar2ego_rotation,
+                lidar_ego2global_translation,
+                lodar_ego2global_rotation
             ),
             (
                 occ_instances,
@@ -137,7 +159,29 @@ if __name__ == "__main__":
     node = ParallelMapper(node, map_fn=dataset.__getitem__, num_workers=1, method="process")
     loader = Loader(node)
     
-    for images in tqdm(loader,total=len(dataset)):
+    for (
+        images,
+        (
+            sensor2ego_translation,
+            sensor2ego_rotation,
+            cam_ego2global_translation,
+            cam_ego2global_rotation,
+            sensor2lidar_rotation,
+            sensor2lidar_translation,
+            cam_intrinsic,
+        ),
+        (
+            lidar2ego_translation,
+            lidar2ego_rotation,
+            lidar_ego2global_translation,
+            lodar_ego2global_rotation
+        ),
+        (
+            occ_instances,
+            occ_semantics,
+            occ_flow
+        )
+        ) in tqdm(loader,total=len(dataset)):
         pass
 
     profiler.stop()

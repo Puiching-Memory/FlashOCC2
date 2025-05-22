@@ -53,20 +53,74 @@ class datasetOpenOCC(torch.utils.data.Dataset):
         image = torchvision.io.decode_image(image_path)  # (C,H,W)
         image = self.image_transforms(image)
         return image
+    
+    def getOCCTensor(self, occ_path: str) -> tuple[torch.Tensor,...]:
+        assert os.path.exists(occ_path)
+        with np.load(occ_path) as f:
+            # NpzFile 'labels.npz' with keys: instances, semantics, flow
+            occ_instances = torch.tensor(f['instances'])
+            occ_semantics = torch.tensor(f['semantics'])
+            occ_flow = torch.tensor(f['flow'])
+        return occ_instances, occ_semantics, occ_flow
+
     def __len__(self)->int:
         return len(self.data['infos'])
     def __getitem__(self, index:int):
-        dataload_time = time.perf_counter_ns()
         clip = self.data['infos'][index]
 
-        images = torch.zeros((6,3,384,1280),dtype=torch.float32)
+        # init data space
+        images = torch.zeros((6,3,384,1280),dtype=torch.float64)
+        sensor2ego_translation = torch.zeros((6,3),dtype=torch.float64)
+        sensor2ego_rotation = torch.zeros((6,4),dtype=torch.float64)
+        cam_ego2global_translation = torch.zeros((6,3),dtype=torch.float64)
+        cam_ego2global_rotation = torch.zeros((6,4),dtype=torch.float64)
+        sensor2lidar_rotation = torch.zeros((6,3,3),dtype=torch.float64)
+        sensor2lidar_translation = torch.zeros((6,3),dtype=torch.float64)
+        cam_intrinsic = torch.zeros((6,3,3),dtype=torch.float64)
+        timestamp = torch.zeros((6),dtype=torch.uint64)
+
+        # CAM_FRONT -> CAM_FRONT_RIGHT -> CAM_FRONT_LEFT -> CAM_BACK -> CAM_BACK_LEFT -> CAM_BACK_RIGHT
         for index, (cam_k, cam_v) in enumerate(clip['cams'].items()):
-            #print(cam_k,cam_v)
+            # load image from data_path
             p = Path(cam_v['data_path'])
             p = p.relative_to(str(Path(*p.parts[:p.parts.index("nuscenes")+1])))
             images[index] = self.getImageTensor(str(self.root_dir / p))
+
+            # load camera intrinsics and extrinsics
+            sensor2ego_translation[index] = torch.tensor(cam_v['sensor2ego_translation'],dtype=torch.float64)
+            sensor2ego_rotation[index] = torch.tensor(cam_v['sensor2ego_rotation'],dtype=torch.float64)
+            cam_ego2global_translation[index] = torch.tensor(cam_v['ego2global_translation'],dtype=torch.float64)
+            cam_ego2global_rotation[index] = torch.tensor(cam_v['ego2global_rotation'],dtype=torch.float64)
+            sensor2lidar_rotation[index] = torch.tensor(cam_v['sensor2lidar_rotation'],dtype=torch.float64)
+            sensor2lidar_translation[index] = torch.tensor(cam_v['sensor2lidar_translation'],dtype=torch.float64)
+            cam_intrinsic[index] = torch.tensor(cam_v['cam_intrinsic'],dtype=torch.float64)
+
+            # load timestamp
+            timestamp[index] = torch.tensor(cam_v['timestamp'],dtype=torch.uint64)
         
-        return images
+        # load vehicle intrinsics and extrinsics
+        lidar2ego_translation = torch.tensor(clip['lidar2ego_translation'])
+        lidar2ego_rotation = torch.tensor(clip['lidar2ego_rotation'])
+        lidar_ego2global_translation = torch.tensor(clip['ego2global_translation'])
+        lodar_ego2global_rotation = torch.tensor(clip['ego2global_rotation'])
+
+        # load OCC GT from occ_path
+        p = Path(clip['occ_path'])
+        p = p.relative_to(str(Path(*p.parts[:p.parts.index("nuscenes")+1])))
+        occ_instances, occ_semantics, occ_flow = self.getOCCTensor(str(self.root_dir / p))
+
+        return (
+            images,
+            (
+            ),
+            (
+            ),
+            (
+                occ_instances,
+                occ_semantics,
+                occ_flow
+            )
+            )
 
 
 if __name__ == "__main__":
@@ -80,12 +134,11 @@ if __name__ == "__main__":
     sampler = RandomSampler(dataset)
 
     node = SamplerWrapper(sampler)
-    node = ParallelMapper(node, map_fn=dataset.__getitem__, num_workers=16, method="process")
+    node = ParallelMapper(node, map_fn=dataset.__getitem__, num_workers=1, method="process")
     loader = Loader(node)
     
     for images in tqdm(loader,total=len(dataset)):
-        images = images.to("cuda:0")
-        print(images.shape,images.dtype,images.device)
+        pass
 
     profiler.stop()
     profiler.print()

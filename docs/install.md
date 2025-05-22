@@ -54,6 +54,7 @@ apt install git
 # install python lib (necessary)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 pip install -e ./3rd_party/nuscenes-devkit -v
+pip install --extra-index-url https://miropsota.github.io/torch_packages_builder pytorch3d==0.7.8+pt2.7.0cu118 -v
 pip install -r requirements.txt -v
 ```
 

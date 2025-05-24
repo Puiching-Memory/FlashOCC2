@@ -8,7 +8,7 @@ docker pull ubuntu:22.04
 
 # install python from source (optional)
 # doc: https://blog.frognew.com/2024/12/build-python3.13-from-source.html
-apt install gcc-11 g++-11 make pkg-config libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libncurses5-dev libncursesw5-dev xz-utils liblzma-dev uuid-dev libffi-dev libgdbm-dev
+apt install gcc-11 g++-11 make pkg-config libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libncurses5-dev libncursesw5-dev xz-utils liblzma-dev uuid-dev libffi-dev libgdbm-dev tk-dev
 cd ./Python-source-forder/
 
 ./configure --enable-optimizations --with-lto --enable-shared

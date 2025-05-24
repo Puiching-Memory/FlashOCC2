@@ -10,15 +10,12 @@
 # basic dependencies (necessary)
 torchdata==0.11.0
 tqdm==4.67.1
-rich==14.0.0
 loguru==0.7.3
 
 # logging board (optional)
 swanlab==0.5.8
-tensorboard==2.19.0
-standard-imghdr==3.13.0
-torch-tb-profiler==0.4.3
-HolisticTraceAnalysis==0.2.0 # pip install git+https://github.com/facebookresearch/HolisticTraceAnalysis.git -v
+# HolisticTraceAnalysis==0.2.0 # (out of date, install from source instead)
+# pip install git+https://github.com/facebookresearch/HolisticTraceAnalysis.git -v
 
 # performance analysis (optional)
 pyinstrument==5.0.1

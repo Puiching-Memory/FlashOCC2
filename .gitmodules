@@ -1,0 +1,3 @@
+[submodule "3rd_party/HolisticTraceAnalysis"]
+	path = 3rd_party/HolisticTraceAnalysis
+	url = https://github.com/facebookresearch/HolisticTraceAnalysis.git

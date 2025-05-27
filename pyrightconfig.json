@@ -3,5 +3,6 @@
       "dataset/",
       "docs/",
       "Python-3.13.3/",
+      "3rd_party/"
     ]
   }

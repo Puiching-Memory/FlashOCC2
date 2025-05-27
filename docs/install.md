@@ -1,15 +1,15 @@
 # 安装环境
 
 ```bash
-* using python=3.13.3 ubuntu2204 cuda11.8 docker H800
+* using python=3.13.3 ubuntu2404 cuda12.8.1 docker H800
 
 # pull ubuntu from docker hub (optional)
-docker pull ubuntu:22.04
+docker pull ubuntu:24.04
 
 # install python from source (optional)
 # doc: https://blog.frognew.com/2024/12/build-python3.13-from-source.html
-apt install gcc-11 g++-11 make pkg-config libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libncurses5-dev libncursesw5-dev xz-utils liblzma-dev uuid-dev libffi-dev libgdbm-dev tk-dev
-cd ./Python-source-forder/
+apt install gcc-13 g++-13 make pkg-config libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libncurses5-dev libncursesw5-dev xz-utils liblzma-dev uuid-dev libffi-dev libgdbm-dev tk-dev
+cd ./Python-3.13.3/
 
 ./configure --enable-optimizations --with-lto --enable-shared
 make -j "$(nproc)"
@@ -23,17 +23,17 @@ ln -s /usr/local/bin/pip3.13 /usr/local/bin/pip
 ln -s /usr/local/bin/python3.13 /usr/local/bin/python3
 ln -s /usr/local/bin/python3.13 /usr/local/bin/python
 
-# install cuda 11.8 (necessary)
-apt install gcc-11 g++-11 libxml2
-ln -s /usr/bin/gcc-11 /usr/bin/gcc
-ln -s /usr/bin/g++-11 /usr/bin/g++
-ln -s /usr/bin/g++-11 /usr/bin/c++
+# install cuda 12.8 (necessary)
+apt install wget gcc-13 g++-13 libxml2
+ln -s /usr/bin/gcc-13 /usr/bin/gcc
+ln -s /usr/bin/g++-13 /usr/bin/g++
+ln -s /usr/bin/g++-13 /usr/bin/c++
 
-wget https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_520.61.05_linux.run
-sh cuda_11.8.0_520.61.05_linux.run
+wget https://developer.download.nvidia.com/compute/cuda/12.8.1/local_installers/cuda_12.8.1_570.124.06_linux.run
+sh cuda_12.8.1_570.124.06_linux.run
 
-sed -i '$a\export PATH=/usr/local/cuda-11.8/bin:$PATH' ~/.bashrc
-sed -i '$a\export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH' ~/.bashrc
+sed -i '$a\export PATH=/usr/local/cuda-12.8/bin:$PATH' ~/.bashrc
+sed -i '$a\export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' ~/.bashrc
 source ~/.bashrc
 
 # enable parallel compilation (optional)
@@ -43,7 +43,8 @@ apt install ninja-build
 apt install libomp-dev
 
 # fix OpenCV missing lib (necessary)
-apt install libgl1-mesa-glx libglib2.0-0 
+apt install libgl1-mesa-glx libglu1-mesa mesa-utils
+apt install libglx-mesa0 libglu1-mesa mesa-utils # ubuntu2404
 
 # enable unzip *.zip file (optional)
 apt install unzip
@@ -52,9 +53,9 @@ apt install unzip
 apt install git
 
 # install python lib (necessary)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install -e ./3rd_party/nuscenes-devkit -v
-pip install --extra-index-url https://miropsota.github.io/torch_packages_builder pytorch3d==0.7.8+pt2.7.0cu118 -v
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip install ./3rd_party/nuscenes-devkit/ -v
+pip install --extra-index-url https://miropsota.github.io/torch_packages_builder pytorch3d==0.7.8+pt2.7.0cu128 -v
 pip install -r requirements.txt -v
 ```
 

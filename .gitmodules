@@ -1,3 +1,6 @@
 [submodule "3rd_party/HolisticTraceAnalysis"]
 	path = 3rd_party/HolisticTraceAnalysis
 	url = https://github.com/facebookresearch/HolisticTraceAnalysis.git
+[submodule "3rd_party/FlashMLA"]
+	path = 3rd_party/FlashMLA
+	url = https://github.com/deepseek-ai/FlashMLA.git

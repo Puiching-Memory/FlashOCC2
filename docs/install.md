@@ -57,6 +57,8 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install ./3rd_party/nuscenes-devkit/ -v
 pip install --extra-index-url https://miropsota.github.io/torch_packages_builder pytorch3d==0.7.8+pt2.7.0cu128 -v
 pip install -r requirements.txt -v
+cd ./3rd_party/FlashMLA
+python setup.py install -v
 ```
 
 ### 验证安装:

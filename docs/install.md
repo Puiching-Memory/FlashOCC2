@@ -1,7 +1,7 @@
 # 安装环境
 
-```bash
-* using python=3.13.3 ubuntu2404 cuda12.8.1 docker H800
+```shell
+# using python=3.13.3 ubuntu2404 cuda12.8.1 docker H800
 
 # pull ubuntu from docker hub (optional)
 docker pull ubuntu:24.04
@@ -56,16 +56,24 @@ apt install git
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 pip install ./3rd_party/nuscenes-devkit/ -v
 pip install --extra-index-url https://miropsota.github.io/torch_packages_builder pytorch3d==0.7.8+pt2.7.0cu128 -v
+pip install 3rd_party/bevpool_v2 -v --no-build-isolation
+# build wheel: python -m build 3rd_party/bevpool_v2 --verbose --no-isolation
+
 pip install -r requirements.txt -v
 cd ./3rd_party/FlashMLA
 python setup.py install -v
 ```
+
+
 
 ### 验证安装:
 
 ```
 python hello_flashocc2.py
 ```
+
+# 准备模型
+export HF_ENDPOINT=https://hf-mirror.com/
 
 # 准备数据
 

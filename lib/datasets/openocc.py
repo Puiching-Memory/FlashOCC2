@@ -83,7 +83,7 @@ class datasetOpenOCC(torch.utils.data.Dataset):
         clip = self.data['infos'][index]
 
         # init data space
-        images = torch.zeros((6,3,384,1280),dtype=torch.float64)
+        images = torch.zeros((6,3,384,1280),dtype=torch.float32)
         sensor2ego_translation = torch.zeros((6,3),dtype=torch.float64)
         sensor2ego_rotation = torch.zeros((6,4),dtype=torch.float64)
         cam_ego2global_translation = torch.zeros((6,3),dtype=torch.float64)

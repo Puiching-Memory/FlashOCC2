@@ -6,7 +6,7 @@ INFO: This repository is an engineering-oriented project and may differ from you
 
 ## 计划
 
-* [ ] 移除mm架构依赖
+* [X] 移除mm架构依赖
 * [ ] 数据集加载器重构
 * [ ] 可视化
 * [ ] 评分

@@ -64,8 +64,6 @@ cd ./3rd_party/FlashMLA
 python setup.py install -v
 ```
 
-
-
 ### 验证安装:
 
 ```
@@ -73,6 +71,7 @@ python hello_flashocc2.py
 ```
 
 # 准备模型
+### 设置镜像源(可选)
 export HF_ENDPOINT=https://hf-mirror.com/
 
 # 准备数据

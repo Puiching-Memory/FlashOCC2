@@ -14,7 +14,7 @@ tqdm==4.67.1
 loguru==0.7.3
 
 # logging board (optional)
-swanlab==0.5.8
+swanlab==0.6.2
 
 # performance analysis (optional)
 pyinstrument==5.0.1

@@ -8,15 +8,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.transforms import v2
-import numpy as np
-import cv2
+from torchvision.utils import save_image
+from tensordict import TensorDict
 
 
 class visualizer(VisualizerBase):
     def __init__(self):
-        self.save_path = (
-            r"C:\workspace\github\monolite\experiment\monolite_YOLO11_centernet\output"
-        )
 
         self.image_transforms = v2.Compose(
             [
@@ -28,76 +25,59 @@ class visualizer(VisualizerBase):
             ]
         )
 
-    def decode_output(
-        self,
-        image: torch.Tensor,
-        output: tuple[torch.Tensor],
-        data_info: dict[torch.Tensor],
-    ) -> dict[np.ndarray]:
-        # 解码image
-        image = self.image_transforms(image)
-        image = image[0].permute(1, 2, 0).cpu().detach().numpy()  # (375, 1242, 3)
-        raw_image_shape = data_info["raw_image_shape"][0].cpu().detach().numpy()
-        image = cv2.resize(image, (raw_image_shape[2], raw_image_shape[1]))
+    def decode_output(self,output:TensorDict):
+        image = self.image_transforms(output["images"])
 
-        # 解码heatmap
-        heatmap3d = output[5].sigmoid_().cpu().detach().numpy()  # (C, 48, 160)
+        return 
 
-        return {}
+    def decode_target(self,target:TensorDict):
+        #image = self.image_transforms(target["images"])
+        save_image(target["images"], os.path.join(self.save_path, "target.png"))
 
-    def decode_target(
-        self,
-        image: torch.Tensor,
-        output: dict[torch.Tensor],
-        data_info: dict[torch.Tensor],
-    ) -> dict[np.ndarray]:
-        # 解码image
-        image = self.image_transforms(image)
-        image = image[0].permute(1, 2, 0).cpu().detach().numpy()  # (375, 1242, 3)
-        raw_image_shape = data_info["raw_image_shape"][0].cpu().detach().numpy()
-        image = cv2.resize(image, (raw_image_shape[2], raw_image_shape[1]))
-
-        ## 解码heatmap
-        heatmap = output["heatmap"][0][0].cpu().detach().numpy()  # (C, 48, 160)
-        heatmap = heatmap.astype(np.uint8)
-
-        cv2.imwrite(os.path.join(self.save_path, "heatmap_raw.jpg"), heatmap)
-
-        # 将heatmap缩放至原图大小
-        heatmap = cv2.resize(heatmap, (image.shape[1], image.shape[0]))
-
-        # 映射颜色图
-        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_VIRIDIS)
-        cv2.imwrite(os.path.join(self.save_path, "heatmap.jpg"), heatmap)
-
-        ## 解码2d box
-        box2d = output["box2d"][0].cpu().detach().numpy()  # (max_obj, 4)
-        box2d = box2d[box2d.sum(axis=1) != 0]
-
-        # 合并图像
-        image = cv2.addWeighted(image, 0.5, heatmap, 0.5, 0)
-
-        # 绘制图像
-        for box in box2d:
-            image = cv2.rectangle(
-                image,
-                (int(box[0]), int(box[1])),
-                (int(box[2]), int(box[3])),
-                (0, 0, 255),
-                2,
-            )
-        cv2.imwrite(os.path.join(self.save_path, "image.jpg"), image)
-
-        return {"heatmap": heatmap}
+        return
 
 
 if __name__ == "__main__":
-    from dataset import data_set
+    import torch.utils.data
+    from torch.utils.data import RandomSampler, DistributedSampler
+    from torchdata.nodes import SamplerWrapper, ParallelMapper, Loader, pin_memory
+    from tqdm import tqdm
+    from lib.datasets.openocc import datasetOpenOCC
 
-    dataset = data_set()
     vis = visualizer()
+    dataset = datasetOpenOCC("dataset/nuscenes","val")
+    sampler = RandomSampler(dataset)
 
-    for inputs, targets, data_info in dataset.get_test_loader():
-        # outputs = test_model(inputs)
-        vis.decode_target(inputs, targets, data_info)
+    node = SamplerWrapper(sampler)
+    node = ParallelMapper(node, map_fn=dataset.__getitem__, num_workers=1, method="process")
+    loader = Loader(node)
+    
+    for (
+        images,
+        (
+            sensor2ego_translation,
+            sensor2ego_rotation,
+            cam_ego2global_translation,
+            cam_ego2global_rotation,
+            sensor2lidar_rotation,
+            sensor2lidar_translation,
+            cam_intrinsic,
+        ),
+        (
+            lidar2ego_translation,
+            lidar2ego_rotation,
+            lidar_ego2global_translation,
+            lodar_ego2global_rotation
+        ),
+        (
+            occ_instances,
+            occ_semantics,
+            occ_flow
+        )
+        ) in tqdm(loader,total=len(dataset)):
+
+        vis.decode_target(TensorDict({
+            "images": images,
+            }))
         break
+

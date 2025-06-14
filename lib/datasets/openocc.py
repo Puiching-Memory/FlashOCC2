@@ -4,9 +4,6 @@ sys.path.append(os.path.abspath("./"))
 
 import numpy as np
 import torch
-import torch.utils.data
-from torch.utils.data import RandomSampler, DistributedSampler
-from torchdata.nodes import SamplerWrapper, ParallelMapper, Loader, pin_memory
 import torchvision
 from torchvision.transforms import v2
 import pickle
@@ -56,7 +53,7 @@ class datasetOpenOCC(torch.utils.data.Dataset):
         # 图像转换
         self.image_transforms = v2.Compose(
             [
-                v2.Resize(size=(384, 1280)),
+                v2.Resize(size=(900, 1600)),
                 v2.ToDtype(torch.float32, scale=True),
                 v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
@@ -83,7 +80,7 @@ class datasetOpenOCC(torch.utils.data.Dataset):
         clip = self.data['infos'][index]
 
         # init data space
-        images = torch.zeros((6,3,384,1280),dtype=torch.float32)
+        images = torch.zeros((6,3,900,1600),dtype=torch.float32)
         sensor2ego_translation = torch.zeros((6,3),dtype=torch.float64)
         sensor2ego_rotation = torch.zeros((6,4),dtype=torch.float64)
         cam_ego2global_translation = torch.zeros((6,3),dtype=torch.float64)
@@ -149,6 +146,9 @@ class datasetOpenOCC(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
+    import torch.utils.data
+    from torch.utils.data import RandomSampler, DistributedSampler
+    from torchdata.nodes import SamplerWrapper, ParallelMapper, Loader, pin_memory
     from pyinstrument import Profiler
     from tqdm import tqdm
 

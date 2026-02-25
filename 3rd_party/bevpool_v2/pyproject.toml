@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools==70.2.0","numpy==2.1.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = false
+
+[project]
+name = "bevpoolv2"
+version = "0.0.1"
+authors = [
+  { name = "MMDetection3D Contributors", email = "zwwdev@gmail.com" }
+]
+description = "bevpoolv2 ops"
+keywords = ["computer vision", "3D object detection"]
+requires-python = ">=3.9"
+dependencies = [
+  "numpy==2.1.2",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+license = { text = "Apache License 2.0" }
+
+[project.urls]
+Homepage = "https://github.com/open-mmlab/mmdetection3d"

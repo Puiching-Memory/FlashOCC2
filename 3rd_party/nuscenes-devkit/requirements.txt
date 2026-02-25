@@ -1,0 +1,13 @@
+cachetools
+descartes
+fire
+matplotlib
+numpy
+opencv-python
+Pillow
+pyquaternion
+scikit-learn
+scipy
+Shapely
+tqdm
+parameterized

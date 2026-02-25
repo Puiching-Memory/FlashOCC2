@@ -1,99 +1,95 @@
-import sys
+#!/usr/bin/env python
+"""FlashOCC 测试脚本.
+
+:
+    python tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth
+    torchrun --nproc_per_node=4 tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth
+"""
+import argparse
 import os
-
-sys.path.append(os.path.abspath("./"))
-
-from lib.utils.logger import logger
-from lib.cfg.base import DataSetBase, VisualizerBase
-
-try:
-    local_rank = int(os.environ["LOCAL_RANK"])
-except:
-    local_rank = -1
-
+import sys
+import pickle
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import torch.amp
 
-torch.backends.cudnn.enabled = True
-torch.backends.cudnn.benchmark = True
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+SRC = os.path.join(ROOT, "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
 
-import importlib
-import argparse
-from torchinfo import summary
-import time
-from rich.progress import track
+from flashocc.config import load_experiment
+from flashocc.core import init_dist, get_dist_info, load_checkpoint
+from flashocc.core.log import logger, setup_logger
+from flashocc.engine import single_gpu_test
+from flashocc.engine.trainer import build_dataloader
 
 
-def detect(
-    model,
-    device,
-    test_loader: torch.utils.data.DataLoader,
-    visualizer: VisualizerBase,
-    logger,
-):
+def parse_args():
+    parser = argparse.ArgumentParser(description="FlashOCC 测试")
+    parser.add_argument("config", help="Python 配置文件路径 (.py)")
+    parser.add_argument("checkpoint", help="checkpoint 文件路径")
+    parser.add_argument("--out", help="保存结果到 pkl 文件")
+    parser.add_argument("--eval", nargs="+", help="评估指标")
+    parser.add_argument("--show", action="store_true")
+    parser.add_argument("--show-dir")
+    parser.add_argument("--gpu-id", type=int, default=0)
+    parser.add_argument("--launcher", choices=["none", "pytorch", "slurm"],
+                        default="none")
+    parser.add_argument("--local_rank", "--local-rank", type=int, default=0)
+    return parser.parse_args()
 
-    for i, (inputs, targets, data_info) in track(enumerate(test_loader), "Detecting"):
-        inputs = inputs.to(device)
-        targets = {key: value.to(device) for key, value in targets.items()}
 
-        forward_time = time.time_ns()
-        outputs = model(inputs)
-        forward_time = (time.time_ns() - forward_time) / 1e6  # ms
+def main():
+    args = parse_args()
 
-        if not os.path.exists(visualizer.save_path):
-            os.mkdir(visualizer.save_path)
+    exp = load_experiment(args.config)
 
-        result = visualizer.decode_output(inputs, outputs)
-        result = visualizer.decode_target(inputs, targets)
+    distributed = args.launcher != "none"
+    if distributed:
+        init_dist(args.launcher)
+    rank, _ = get_dist_info()
 
-        info = {
-            "forward_time": forward_time,
-        }
+    setup_logger(level="INFO", rank0_only=True)
 
-        break
+    # 构建测试数据集
+    dataset = exp.build_test_dataset()
+    logger.info(f"测试集: {dataset.__class__.__name__} ({len(dataset)} 样本)")
+
+    data_loader = build_dataloader(
+        dataset, samples_per_gpu=1,
+        workers_per_gpu=exp.workers_per_gpu,
+        dist_mode=distributed,
+    )
+
+    # 构建模型
+    model = exp.build_model()
+    load_checkpoint(model, args.checkpoint, map_location="cpu")
+    model = model.cuda()
+
+    # 测试
+    logger.info("开始测试...")
+    results = single_gpu_test(model, data_loader, show=args.show,
+                              out_dir=args.show_dir)
+
+    # 保存
+    if args.out and rank == 0:
+        logger.info(f"保存结果到 {args.out}")
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        with open(args.out, "wb") as f:
+            pickle.dump(results, f)
+
+    # 评估
+    if args.eval and rank == 0:
+        eval_kwargs = {"metric": args.eval}
+        if hasattr(dataset, "evaluate"):
+            metrics = dataset.evaluate(results, **eval_kwargs)
+            for k, v in metrics.items():
+                logger.info(f"{k}: {v}")
+
+    logger.info("测试完成。")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Monolite detection script")
-    parser.add_argument("--cfg", dest="cfg", help="path to config file")
-    args = parser.parse_args()
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # 添加模块搜索路径
-    sys.path.append(args.cfg)
-
-    # 导入模型
-    model: torch.nn.Module = importlib.import_module("model").model()
-    checkpoint_dict = torch.load(
-        os.path.join(args.cfg, "checkpoint", "model.pth"),
-        map_location=device,
-        weights_only=True,
-    )
-    model.load_state_dict(checkpoint_dict['model'])
-    model.eval()
-    model = model.to(device)
-
-    # 导入数据集
-    data_set: DataSetBase = importlib.import_module("dataset").data_set()
-
-    # 导入可视化工具
-    visualizer: VisualizerBase = importlib.import_module("visualizer").visualizer()
-
-    # 打印基本信息
-    print(
-        f"\n{summary(model, input_size=(data_set.get_bath_size(),3,384,1280),mode='train',verbose=0)}"
-    )
-    logger.info(data_set)
-
-    detect(
-        model,
-        device,
-        data_set.get_test_loader(),
-        visualizer,
-        logger,
-    )
+    main()

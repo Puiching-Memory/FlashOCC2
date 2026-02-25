@@ -1,0 +1,41 @@
+[project]
+name = "flashocc"
+version = "2.0.0"
+description = "FlashOCC: Fast and Memory-Efficient Occupancy Prediction via Channel-to-Height Plugin"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "numpy>=1.26",
+    "pillow>=10.0",
+    "nuscenes-devkit>=1.2.0",
+    "pyquaternion>=0.9.9",
+    "tqdm>=4.67",
+    "loguru>=0.7",
+    "pyyaml>=6.0",
+    "opencv-python-headless>=4.10",
+    "prettytable>=3.10",
+    "ninja>=1.11",
+    "timm>=1.0",
+    "omegaconf>=2.3",
+    "torchmetrics>=1.6",
+    "scikit-learn>=1.5",
+    "termcolor>=2.4",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flashocc*"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }

@@ -504,7 +504,7 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
                 directory created for saving json files when
                 `jsonfile_prefix` is not specified.
         """
-        assert isinstance(results, list), 'results must be a list'
+        assert hasattr(results, '__len__'), 'results must be a list'
         assert len(results) == len(self), (
             'The length of results is not equal to the dataset len: {} != {}'.
             format(len(results), len(self)))
@@ -563,13 +563,13 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
         """
         result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
 
-        if isinstance(result_files, dict):
+        if hasattr(result_files, 'keys'):
             results_dict = dict()
             for name in result_names:
                 _logger.info(f'Evaluating bboxes of {name}')
                 ret_dict = self._evaluate_single(result_files[name])
             results_dict.update(ret_dict)
-        elif isinstance(result_files, str):
+        elif hasattr(result_files, 'upper'):
             results_dict = self._evaluate_single(result_files)
 
         if tmp_dir is not None:

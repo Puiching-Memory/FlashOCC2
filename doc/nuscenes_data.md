@@ -2,17 +2,14 @@
 
 ## 1. 下载数据集
 
-从 [NuScenes 官网](https://www.nuscenes.org/nuscenes) 下载：
-
-- Full dataset (v1.0-trainval): 约 300GB
-- Mini dataset (v1.0-mini): 约 4GB（用于快速验证）
+从 [NuScenes 官网](https://www.nuscenes.org/nuscenes) 下载
 
 ## 2. 数据目录结构
 
-将数据放置在 `data/nuscenes/` 目录下：
+将数据放置在 `data/nuScenes/` 目录下：
 
 ```
-data/nuscenes/
+data/nuScenes/
 ├── maps/
 ├── samples/
 │   ├── CAM_BACK/
@@ -43,27 +40,35 @@ data/nuscenes/
     └── v1.0-trainval/
 ```
 
-> **注意**: `data/` 目录存放数据，不被 git 跟踪。处理数据的代码在 `src/flashocc/datasets/` 下。
-
 ## 3. 生成 BEVDet 格式数据信息
 
 ```bash
-python tools/create_data_bevdet.py
+python tools/create_data_flashocc2.py \
+    --root-path data/nuScenes \
+    --out-dir data/ \
+    --extra-tag flashocc2-nuscenes \
+    --max-sweeps 0 \
+    --parallel-backend process \
+    --num-workers 8
 ```
 
-> **注意**: `create_data_bevdet.py` 依赖 `nuscenes_converter.py`，后者需要 `mmcv` 和 `mmdet3d`。
-> 如果已有预生成的 pkl 文件，可跳过此步骤。
-
 生成的文件：
-- `data/nuscenes/bevdetv2-nuscenes_infos_train.pkl`
-- `data/nuscenes/bevdetv2-nuscenes_infos_val.pkl`
+- `data/nuScenes/flashocc2-nuscenes_infos_train.pkl`
+- `data/nuScenes/flashocc2-nuscenes_infos_val.pkl`
+
+> 可选参数：
+> - `--path-mode relative|absolute`：控制 pkl 中 `data_path` / `occ_path` 存储相对路径或绝对路径。
+> - `--occ-root <path>`：指定 OCC GT 根目录，默认 `<root-path>/gts`。
+> - `--num-workers <int>`：样本级并行 worker 数，设为 `1` 表示关闭并行。
+> - `--parallel-backend thread|process`：并行后端；`thread`（默认）内存占用更低，`process` 速度可能更高但占用更大。
+> - 建议先从 `thread + 4~8 workers` 起步，再按机器资源逐步调高。
 
 ## 4. Occupancy GT 数据
 
 FlashOCC 训练需要体素化的占用真值：
 
 ```
-data/nuscenes/
+data/nuScenes/
 └── gts/
     ├── scene-0001/
     │   ├── <sample_token>/   # 每帧的占用网格
@@ -87,7 +92,7 @@ data/nuscenes/
 ```bash
 python -c "
 import pickle
-with open('data/nuscenes/bevdetv2-nuscenes_infos_train.pkl', 'rb') as f:
+with open('data/nuScenes/flashocc2-nuscenes_infos_train.pkl', 'rb') as f:
     data = pickle.load(f)
 print(f'训练集样本数: {len(data[\"infos\"])}')
 "

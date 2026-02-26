@@ -1,10 +1,9 @@
 """组合式配置 — Lazy 延迟构建 + Experiment 实验描述.
 
-'s|/desay120T/ct/dev/uid01954/FlashOCC/||''s|/desay120T/ct/dev/uid01954//desay120T/ct/dev/uid01954/FlashOCC/src/flashocc
 --------
 1. **所有组件都是真实 Python 类** — import 即检查, IDE 可跳转/补全
 2. **Lazy(cls, **kw)** — 延迟构建描述符, "我要用这个类 + 这些参数"
-3. **Experiment** — 一次实验的完整描述, 训练引擎直接消费
+3. **Experiment** — pydantic BaseModel, 一次实验的完整描述, 训练引擎直接消费
 4. **无字典配置, 无字符串类型名, 无 YAML, 无运行时覆写**
 
 
@@ -18,10 +17,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from dataclasses import dataclass, field
-from typing import Any, List, Optional, Type
+from typing import Any, Optional
 
 import torch
+from plum import dispatch
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 # =====================================================================
@@ -70,21 +70,23 @@ class Lazy:
         return f"Lazy({self._cls.__name__}, {args})"
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Lazy):
+        if not hasattr(other, '_cls') or not hasattr(other, '_kwargs'):
             return NotImplemented
         return self._cls is other._cls and self._kwargs == other._kwargs
 
 
 # =====================================================================
-#  Experiment — 实验描述
+#  Experiment — pydantic BaseModel 实验描述
 # =====================================================================
 
-@dataclass
-class Experiment:
+class Experiment(BaseModel):
     """一次实验的完整描述 — 训练引擎直接消费此对象.
 
     所有字段类型明确, IDE 可自动补全、静态检查。
+    pydantic 在构造时自动验证字段, 无需额外 Envelope 包装。
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # ---- 模型 ----
     model: Lazy
@@ -95,10 +97,14 @@ class Experiment:
     test_data: Optional[Lazy] = None
     samples_per_gpu: int = 4
     workers_per_gpu: int = 4
+    dataloader_pin_memory: bool = True
+    dataloader_persistent_workers: bool = True
+    dataloader_prefetch_factor: Optional[int] = 2
+    dataloader_drop_last: bool = False
+    dataloader_non_blocking: bool = True
 
     # ---- 优化器 (Lazy 包装 torch.optim 类) ----
-    optimizer: Lazy = field(
-        default_factory=lambda: Lazy(torch.optim.AdamW, lr=1e-4, weight_decay=1e-2))
+    optimizer: Lazy = Lazy(torch.optim.AdamW, lr=1e-4, weight_decay=1e-2)
 
     # ---- 学习率调度器 (Lazy 包装 torch.optim.lr_scheduler 类) ----
     lr_scheduler: Optional[Lazy] = None
@@ -130,6 +136,69 @@ class Experiment:
     seed: int = 0
     log_interval: int = 50
     find_unused_parameters: bool = False
+    cudnn_benchmark: bool = True
+    allow_tf32: bool = True
+    float32_matmul_precision: Optional[str] = "high"
+    optimizer_set_to_none: bool = True
+
+    # ---- 性能优化 ----
+    use_amp: bool = False
+    amp_dtype: str = "bfloat16"  # "float16" | "bfloat16"
+    use_channels_last: bool = False
+    use_compile: bool = False
+    compile_backend: str = "inductor"
+    compile_mode: str = "reduce-overhead"  # "default" | "reduce-overhead" | "max-autotune"
+
+    # ================================================================
+    #  验证器
+    # ================================================================
+
+    @field_validator("samples_per_gpu", "workers_per_gpu")
+    @classmethod
+    def _positive_int(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"必须为正整数, 收到 {v}")
+        return v
+
+    @field_validator("max_epochs")
+    @classmethod
+    def _epochs_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"max_epochs 必须为正整数, 收到 {v}")
+        return v
+
+    @field_validator("dataloader_prefetch_factor")
+    @classmethod
+    def _prefetch_factor_positive(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError(f"dataloader_prefetch_factor 必须为正整数, 收到 {v}")
+        return v
+
+    @field_validator("float32_matmul_precision")
+    @classmethod
+    def _matmul_precision_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        allowed = {"highest", "high", "medium"}
+        if v not in allowed:
+            raise ValueError(
+                f"float32_matmul_precision 必须为 {sorted(allowed)} 之一, 收到 {v}"
+            )
+        return v
+
+    @field_validator("warmup_ratio")
+    @classmethod
+    def _warmup_ratio_range(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"warmup_ratio 应在 [0, 1], 收到 {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _eval_start_le_epochs(self) -> "Experiment":
+        if self.eval_start > self.max_epochs:
+            # 自动修正: eval_start 不超过 max_epochs
+            object.__setattr__(self, "eval_start", self.max_epochs)
+        return self
 
     # ================================================================
     #  构建方法
@@ -187,22 +256,39 @@ def load_experiment(filepath: str) -> Experiment:
         raise AttributeError(
             f"配置文件 {filepath} 中未定义 'experiment'。"
             f"\n须定义: experiment = Experiment(...)")
-    exp = mod.experiment
-    if not isinstance(exp, Experiment):
-        raise TypeError(f"'experiment' 须为 Experiment, 得到 {type(exp)}")
-    return exp
+    raw_exp = mod.experiment
+    if not isinstance(raw_exp, Experiment):
+        raise TypeError(
+            f"'experiment' 不是 Experiment 实例, 得到 {type(raw_exp)}")
+    return raw_exp
 
 
 # =====================================================================
 #  内部
 # =====================================================================
 
-def _resolve(v: Any) -> Any:
+@dispatch
+def _resolve(v: Lazy) -> Any:
     """递归解析 Lazy → 实例."""
-    if isinstance(v, Lazy):
-        return v.build()
-    if isinstance(v, dict):
-        return {dk: _resolve(dv) for dk, dv in v.items()}
-    if isinstance(v, (list, tuple)):
-        return type(v)(_resolve(item) for item in v)
+    return v.build()
+
+
+@dispatch
+def _resolve(v: dict) -> Any:
+    return {dk: _resolve(dv) for dk, dv in v.items()}
+
+
+@dispatch
+def _resolve(v: list) -> Any:
+    return [_resolve(item) for item in v]
+
+
+@dispatch
+def _resolve(v: tuple) -> Any:
+    return tuple(_resolve(item) for item in v)
+
+
+@dispatch
+def _resolve(v: object) -> Any:
+    """递归解析 Lazy → 实例."""
     return v

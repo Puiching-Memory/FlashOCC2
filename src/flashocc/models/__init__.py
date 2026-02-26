@@ -1,11 +1,15 @@
 """模型注册表与构建器.
 
-Lazy 路径: Lazy 递归 build() 时, 子组件已是 nn.Module, build_* 直接返回。
+使用 plum-dispatch 实现类型安全的 passthrough/build 分派:
+  - nn.Module 直接透传
+  - dict 通过 Registry.build() 构建
+  - Lazy 通过 Lazy.build() 构建
 """
 
 from __future__ import annotations
 
 import torch.nn as nn
+from plum import dispatch
 
 from flashocc.core.registry import Registry
 
@@ -17,29 +21,36 @@ HEADS = Registry("heads")
 LOSSES = Registry("losses")
 
 
-def _passthrough_or_build(registry: Registry, cfg):
-    """如果 cfg 是已构建的 nn.Module 则直通, 否则通过 Registry 构建."""
-    if isinstance(cfg, nn.Module):
-        return cfg
-    return registry.build(cfg)
+# =====================================================================
+#  plum-dispatch 构建器 — 按类型自动分派
+# =====================================================================
+
+@dispatch
+def _build_from(registry: Registry, cfg: nn.Module, **kwargs) -> nn.Module:
+    """已构建的 nn.Module → 直通."""
+    return cfg
+
+
+@dispatch
+def _build_from(registry: Registry, cfg: dict, **kwargs) -> nn.Module:
+    """dict 配置 → 通过 Registry 构建."""
+    return registry.build(cfg, default_args=kwargs if kwargs else None)
 
 
 def build_backbone(cfg, **kwargs):
-    return _passthrough_or_build(BACKBONES, cfg)
+    return _build_from(BACKBONES, cfg, **kwargs)
 
 
 def build_neck(cfg, **kwargs):
-    return _passthrough_or_build(NECKS, cfg)
+    return _build_from(NECKS, cfg, **kwargs)
 
 
 def build_head(cfg, **kwargs):
-    if isinstance(cfg, nn.Module):
-        return cfg
-    return HEADS.build(cfg, default_args=kwargs if kwargs else None)
+    return _build_from(HEADS, cfg, **kwargs)
 
 
 def build_loss(cfg, **kwargs):
-    return _passthrough_or_build(LOSSES, cfg)
+    return _build_from(LOSSES, cfg, **kwargs)
 
 
 def build_detector(cfg, train_cfg=None, test_cfg=None):

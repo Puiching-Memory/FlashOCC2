@@ -78,12 +78,12 @@ class Custom3DDataset(Dataset):
         """Return class names tuple."""
         if classes is None:
             return cls.CLASSES or ()
-        if isinstance(classes, str):
+        if hasattr(classes, 'upper'):
             # File path — one class per line
             with open(classes) as f:
                 class_names = tuple(line.strip() for line in f if line.strip())
             return class_names
-        if isinstance(classes, (list, tuple)):
+        if hasattr(classes, '__iter__'):
             return tuple(classes)
         raise ValueError(f'Unsupported type {type(classes)} for classes.')
 

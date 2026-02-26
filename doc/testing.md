@@ -49,24 +49,24 @@ python tools/test.py configs/flashocc_r50.py epoch_24.pth --out results/flashocc
 
 ### NuScenes 占用语义类别（18 类）
 
-| ID | 类别 | ID | 类别 |
-|----|------|----|------|
-| 0 | others | 9 | traffic_cone |
-| 1 | barrier | 10 | trailer |
-| 2 | bicycle | 11 | truck |
-| 3 | bus | 12 | driveable_surface |
-| 4 | car | 13 | other_flat |
-| 5 | construction_vehicle | 14 | sidewalk |
-| 6 | motorcycle | 15 | terrain |
-| 7 | pedestrian | 16 | manmade |
-| 8 | traffic_cone | 17 | vegetation |
+| ID  | 类别                 | ID  | 类别              |
+| --- | -------------------- | --- | ----------------- |
+| 0   | others               | 9   | traffic_cone      |
+| 1   | barrier              | 10  | trailer           |
+| 2   | bicycle              | 11  | truck             |
+| 3   | bus                  | 12  | driveable_surface |
+| 4   | car                  | 13  | other_flat        |
+| 5   | construction_vehicle | 14  | sidewalk          |
+| 6   | motorcycle           | 15  | terrain           |
+| 7   | pedestrian           | 16  | manmade           |
+| 8   | traffic_cone         | 17  | vegetation        |
 
 完整类别列表定义在 `src/flashocc/constants.py` 的 `OCC_CLASS_NAMES` 中。
 
 ### 参考性能
 
-| 模型 | Backbone | mIoU |
-|------|----------|------|
-| FlashOCC M1 (1f) | R50 | 32.08 |
-| FlashOCC-4D-Stereo (2f) | R50 | 37.84 |
-| FlashOCC-4D-Stereo (2f) | Swin-B | 43.52 |
+| 模型                    | Backbone | mIoU  |
+| ----------------------- | -------- | ----- |
+| FlashOCC M1 (1f)        | R50      | 32.08 |
+| FlashOCC-4D-Stereo (2f) | R50      | 37.84 |
+| FlashOCC-4D-Stereo (2f) | Swin-B   | 43.52 |

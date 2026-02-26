@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from plum import dispatch
 
 
 # =====================================================================
@@ -28,7 +29,7 @@ class DataContainer:
 
     @property
     def datatype(self):
-        return self._data.type() if isinstance(self._data, torch.Tensor) else type(self._data)
+        return self._data.type() if hasattr(self._data, 'type') and callable(self._data.type) else type(self._data)
 
     @property
     def stack(self):
@@ -58,14 +59,30 @@ class DataContainer:
 # =====================================================================
 
 
-def _unwrap(data):
+@dispatch
+def _unwrap(data: DataContainer):
     """递归解包 DataContainer."""
-    if isinstance(data, DataContainer):
-        return data.data
-    if isinstance(data, dict):
-        return {k: _unwrap(v) for k, v in data.items()}
-    if isinstance(data, (list, tuple)):
-        return type(data)(_unwrap(d) for d in data)
+    return data.data
+
+
+@dispatch
+def _unwrap(data: dict):
+    return {k: _unwrap(v) for k, v in data.items()}
+
+
+@dispatch
+def _unwrap(data: list):
+    return [_unwrap(d) for d in data]
+
+
+@dispatch
+def _unwrap(data: tuple):
+    return tuple(_unwrap(d) for d in data)
+
+
+@dispatch
+def _unwrap(data: object):
+    """递归解包 DataContainer."""
     return data
 
 

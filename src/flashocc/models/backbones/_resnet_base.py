@@ -30,7 +30,7 @@ def _norm_cfg_to_layer(norm_cfg):
     """将 norm_cfg dict 转为 norm_layer callable."""
     if norm_cfg is None:
         return nn.BatchNorm2d
-    tp = norm_cfg.get("type", "BN") if isinstance(norm_cfg, dict) else "BN"
+    tp = norm_cfg.get("type", "BN") if hasattr(norm_cfg, 'get') else "BN"
     return _NORM_MAP.get(tp, nn.BatchNorm2d) or nn.BatchNorm2d
 
 
@@ -92,11 +92,7 @@ class ResNet(nn.Module):
         timm_name = _TIMM_MAP.get(depth, f"resnet{depth}")
 
         # 判断是否使用 timm 内置预训练
-        use_timm_pretrained = False
-        if pretrained is True:
-            use_timm_pretrained = True
-        elif isinstance(pretrained, str) and pretrained.startswith("torchvision://"):
-            use_timm_pretrained = True
+        use_timm_pretrained = (pretrained is True)
 
         self.backbone = timm.create_model(
             timm_name,
@@ -113,8 +109,8 @@ class ResNet(nn.Module):
         # mmdet out_indices 映射: mmdet_i → timm_i+1
         self.num_features = [all_channels[i + 1] for i in out_indices]
 
-        # 加载自定义预训练权重
-        if isinstance(pretrained, str) and not pretrained.startswith("torchvision://"):
+        # 加载自定义预训练权重 (字符串路径或 URL)
+        if isinstance(pretrained, str):
             self._load_custom_pretrained(pretrained)
 
         self._freeze_stages()
@@ -124,7 +120,7 @@ class ResNet(nn.Module):
             sd = torch.hub.load_state_dict_from_url(path, map_location="cpu")
         else:
             sd = torch.load(path, map_location="cpu", weights_only=False)
-        if isinstance(sd, dict):
+        if hasattr(sd, 'get'):
             sd = sd.get("state_dict", sd.get("model", sd))
         if any(k.startswith("module.") for k in sd):
             sd = {k.removeprefix("module."): v for k, v in sd.items()}
@@ -163,8 +159,9 @@ class ResNet(nn.Module):
         super().train(mode)
         self._freeze_stages()
         if mode and self.norm_eval:
+            _bn_names = frozenset({'BatchNorm2d', 'SyncBatchNorm'})
             for m in self.modules():
-                if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                if type(m).__name__ in _bn_names:
                     m.eval()
 
 

@@ -12,7 +12,8 @@ class Compose:
 
         self.transforms = []
         for t in transforms:
-            if isinstance(t, Lazy):
+            if hasattr(t, 'build') and hasattr(t, '_cls'):
+                # Lazy descriptor
                 self.transforms.append(t.build())
             elif callable(t):
                 self.transforms.append(t)

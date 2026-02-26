@@ -1,7 +1,17 @@
 """模型初始化和推理."""
 import torch
+from pydantic import BaseModel, ConfigDict
+
 from flashocc.config import load_experiment, Experiment
 from flashocc.core import load_checkpoint
+
+
+class _InitModelInput(BaseModel):
+    config: str | Experiment
+    checkpoint: str | None = None
+    device: str = "cuda:0"
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def init_model(config, checkpoint=None, device="cuda:0"):
@@ -15,17 +25,22 @@ def init_model(config, checkpoint=None, device="cuda:0"):
     Returns:
         nn.Module: 初始化好的模型。
     """
-    if isinstance(config, str):
-        exp = load_experiment(config)
-    elif isinstance(config, Experiment):
-        exp = config
-    else:
-        raise TypeError(f"config 须为 str 或 Experiment, 得到 {type(config)}")
+    validated = _InitModelInput.model_validate(
+        {"config": config, "checkpoint": checkpoint, "device": device}
+    )
+
+    match validated.config:
+        case str() as cfg_path:
+            exp = load_experiment(cfg_path)
+        case Experiment() as exp_obj:
+            exp = exp_obj
+        case _:
+            raise TypeError(f"config 须为 str 或 Experiment, 得到 {type(validated.config)}")
 
     model = exp.build_model()
-    if checkpoint is not None:
-        load_checkpoint(model, checkpoint, map_location="cpu")
-    model.to(device)
+    if validated.checkpoint is not None:
+        load_checkpoint(model, validated.checkpoint, map_location="cpu")
+    model.to(validated.device)
     model.eval()
     return model
 

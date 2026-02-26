@@ -36,7 +36,7 @@ class BEVDet(MVXTwoStageDetector):
             x = x[1:]
         if self.with_img_neck:
             x = self.img_neck(x)
-            if type(x) in [list, tuple]:
+            if hasattr(x, '__getitem__') and not hasattr(x, 'shape'):
                 x = x[0]
         _, output_dim, ouput_H, output_W = x.shape
         x = x.view(B, N, output_dim, ouput_H, output_W)
@@ -52,7 +52,7 @@ class BEVDet(MVXTwoStageDetector):
         """
         x = self.img_bev_encoder_backbone(x)
         x = self.img_bev_encoder_neck(x)
-        if type(x) in [list, tuple]:
+        if hasattr(x, '__getitem__') and not hasattr(x, 'shape'):
             x = x[0]
         return x
 
@@ -68,7 +68,7 @@ class BEVDet(MVXTwoStageDetector):
 
         # calculate the transformation from adj sensor to key ego
         keyego2global = ego2globals[:, 0,  ...].unsqueeze(1)    # (B, 1, 4, 4)
-        global2keyego = torch.inverse(keyego2global.double())   # (B, 1, 4, 4)
+        global2keyego = torch.linalg.inv(keyego2global.double())   # (B, 1, 4, 4)
         sensor2keyegos = \
             global2keyego @ ego2globals.double() @ sensor2egos.double()     # (B, N_views, 4, 4)
         sensor2keyegos = sensor2keyegos.float()
@@ -182,9 +182,15 @@ class BEVDet(MVXTwoStageDetector):
                 torch.Tensor should have a shape NxCxHxW, which contains
                 all images in the batch. Defaults to None.
         """
+        # 归一化: 确保 img_inputs 和 img_metas 是嵌套 list (外层=augmentation)
+        if hasattr(img_inputs, '__getitem__') and img_inputs and hasattr(img_inputs[0], 'shape'):
+            img_inputs = [img_inputs]
+        if hasattr(img_metas, '__getitem__') and (not img_metas or hasattr(img_metas[0], 'keys')):
+            img_metas = [img_metas]
+
         for var, name in [(img_inputs, 'img_inputs'),
                           (img_metas, 'img_metas')]:
-            if not isinstance(var, list):
+            if not hasattr(var, '__getitem__'):
                 raise TypeError('{} must be a list, but got {}'.format(
                     name, type(var)))
 
@@ -194,7 +200,7 @@ class BEVDet(MVXTwoStageDetector):
                 'num of augmentations ({}) != num of image meta ({})'.format(
                     len(img_inputs), len(img_metas)))
 
-        if not isinstance(img_inputs[0][0], list):
+        if not hasattr(img_inputs[0][0], '__getitem__') or hasattr(img_inputs[0][0], 'shape'):
             img_inputs = [img_inputs] if img_inputs is None else img_inputs
             points = [points] if points is None else points
             return self.simple_test(points[0], img_metas[0], img_inputs[0],

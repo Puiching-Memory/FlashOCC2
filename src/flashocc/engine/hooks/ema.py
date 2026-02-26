@@ -3,8 +3,11 @@
 import math
 import os
 from copy import deepcopy
+from typing import Optional
 
 import torch
+from pydantic import BaseModel, ConfigDict, field_validator
+
 from flashocc.core import load_state_dict
 from flashocc.core.dist import master_only
 from flashocc.core.log import logger
@@ -13,6 +16,21 @@ from flashocc.core.hooks import HOOKS, Hook
 from .utils import is_parallel
 
 __all__ = ['ModelEMA']
+
+
+class EMAConfig(BaseModel):
+    """EMA 钩子配置."""
+    model_config = ConfigDict(extra="allow")
+    init_updates: int = 0
+    decay: float = 0.9990
+    resume: Optional[str] = None
+
+    @field_validator("decay")
+    @classmethod
+    def _decay_in_range(cls, v: float) -> float:
+        if not 0.0 < v < 1.0:
+            raise ValueError(f"decay 应在 (0, 1), 收到 {v}")
+        return v
 
 
 class ModelEMA:
@@ -62,7 +80,7 @@ class ModelEMA:
 
 @HOOKS.register_module()
 class MEGVIIEMAHook(Hook):
-    """EMAHook used in BEVDepth.
+    """EMAHook used in BEVDepth — pydantic 验证配置参数.
 
     Modified from https://github.com/Megvii-Base
     Detection/BEVDepth/blob/main/callbacks/ema.py.
@@ -70,17 +88,16 @@ class MEGVIIEMAHook(Hook):
 
     def __init__(self, init_updates=0, decay=0.9990, resume=None):
         super().__init__()
-        self.init_updates = init_updates
-        self.resume = resume
-        self.decay = decay
+        cfg = EMAConfig(init_updates=init_updates, decay=decay, resume=resume)
+        self.init_updates = cfg.init_updates
+        self.resume = cfg.resume
+        self.decay = cfg.decay
 
     def before_run(self, runner):
-        from torch.nn.modules.batchnorm import SyncBatchNorm
-
         bn_model_list = list()
         bn_model_dist_group_list = list()
         for model_ref in runner.model.modules():
-            if isinstance(model_ref, SyncBatchNorm):
+            if type(model_ref).__name__ == 'SyncBatchNorm':
                 bn_model_list.append(model_ref)
                 bn_model_dist_group_list.append(model_ref.process_group)
                 model_ref.process_group = None

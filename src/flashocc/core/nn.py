@@ -1,8 +1,45 @@
-"""神经网络构建模块 — Conv / Norm / Init 工具."""
+"""神经网络构建模块 — Conv / Norm / Init 工具.
+
+使用 pydantic 配置模型 + plum-dispatch 替代手动查表。
+"""
 
 from __future__ import annotations
 
+from typing import Literal, Optional
+
 import torch.nn as nn
+from plum import dispatch
+from pydantic import BaseModel, ConfigDict
+
+
+# =====================================================================
+#  Pydantic 配置模型
+# =====================================================================
+
+class ConvConfig(BaseModel):
+    """卷积层配置."""
+    model_config = ConfigDict(extra="allow")
+    type: Literal["Conv1d", "Conv2d", "Conv3d", "Conv"] = "Conv2d"
+
+
+class NormConfig(BaseModel):
+    """归一化层配置."""
+    model_config = ConfigDict(extra="allow")
+    type: Literal[
+        "BN", "BN1d", "BN2d", "BN3d", "SyncBN",
+        "GN", "LN", "IN", "IN3d",
+    ] = "BN"
+    num_groups: int = 32  # GN only
+
+
+class ActConfig(BaseModel):
+    """激活函数配置."""
+    model_config = ConfigDict(extra="allow")
+    type: Literal[
+        "ReLU", "LeakyReLU", "PReLU", "RReLU", "ReLU6",
+        "ELU", "Sigmoid", "Tanh", "GELU", "SiLU",
+    ] = "ReLU"
+
 
 # =====================================================================
 #  查找表
@@ -29,22 +66,42 @@ _ACT = {
 }
 
 # =====================================================================
-#  Conv
+#  Conv — plum-dispatch 多分派构建
 # =====================================================================
 
 
-def build_conv_layer(cfg, *args, **kwargs) -> nn.Module:
-    """根据 cfg 构建卷积层, cfg=None 默认 Conv2d."""
-    if cfg is None:
-        return nn.Conv2d(*args, **kwargs)
+@dispatch
+def build_conv_layer(cfg: None, *args, **kwargs) -> nn.Module:
+    """cfg=None → 默认 Conv2d."""
+    return nn.Conv2d(*args, **kwargs)
+
+
+@dispatch
+def build_conv_layer(cfg: dict, *args, **kwargs) -> nn.Module:
+    """兼容 dict 配置."""
     cfg = cfg.copy()
     cls = _CONV[cfg.pop("type")]
     return cls(*args, **kwargs)
 
 
-def _build_norm(norm_cfg, num_features):
-    if norm_cfg is None:
-        return None
+@dispatch
+def build_conv_layer(cfg: ConvConfig, *args, **kwargs) -> nn.Module:
+    """pydantic ConvConfig 构建."""
+    cls = _CONV[cfg.type]
+    return cls(*args, **kwargs)
+
+
+# =====================================================================
+#  Norm — plum-dispatch 多分派构建
+# =====================================================================
+
+@dispatch
+def _build_norm(norm_cfg: None, num_features: int):
+    return None
+
+
+@dispatch
+def _build_norm(norm_cfg: dict, num_features: int):
     cfg = norm_cfg.copy()
     tp = cfg.pop("type")
     if tp == "GN":
@@ -54,15 +111,42 @@ def _build_norm(norm_cfg, num_features):
     return _NORM[tp](num_features, **cfg)
 
 
-def _build_act(act_cfg, inplace=True):
-    if act_cfg is None:
-        return None
+@dispatch
+def _build_norm(norm_cfg: NormConfig, num_features: int):
+    extra = {k: v for k, v in norm_cfg.model_extra.items()} if norm_cfg.model_extra else {}
+    if norm_cfg.type == "GN":
+        return nn.GroupNorm(norm_cfg.num_groups, num_features, **extra)
+    if norm_cfg.type == "LN":
+        return nn.LayerNorm(num_features, **extra)
+    return _NORM[norm_cfg.type](num_features, **extra)
+
+
+# =====================================================================
+#  Act — plum-dispatch 多分派构建
+# =====================================================================
+
+@dispatch
+def _build_act(act_cfg: None, inplace: bool = True):
+    return None
+
+
+@dispatch
+def _build_act(act_cfg: dict, inplace: bool = True):
     cfg = act_cfg.copy()
     tp = cfg.pop("type")
     cls = _ACT[tp]
     if "inplace" not in cfg and hasattr(cls(), "inplace"):
         cfg["inplace"] = inplace
     return cls(**cfg)
+
+
+@dispatch
+def _build_act(act_cfg: ActConfig, inplace: bool = True):
+    cls = _ACT[act_cfg.type]
+    extra = {k: v for k, v in act_cfg.model_extra.items()} if act_cfg.model_extra else {}
+    if "inplace" not in extra and hasattr(cls(), "inplace"):
+        extra["inplace"] = inplace
+    return cls(**extra)
 
 
 class ConvModule(nn.Module):
@@ -99,16 +183,13 @@ class ConvModule(nn.Module):
 
 
 # =====================================================================
-#  Norm (独立构建器)
+#  Norm (独立构建器) — plum-dispatch
 # =====================================================================
 
 
+@dispatch
 def build_norm_layer(cfg: dict, num_features: int, postfix="") -> tuple[str, nn.Module]:
-    """根据 cfg 构建归一化层.
-
-    Returns:
-        (name, layer) 元组.
-    """
+    """根据 dict cfg 构建归一化层."""
     if cfg is None:
         raise TypeError("cfg 不能为 None")
     cfg = cfg.copy()
@@ -122,6 +203,20 @@ def build_norm_layer(cfg: dict, num_features: int, postfix="") -> tuple[str, nn.
     else:
         layer = _NORM[tp](num_features, **cfg)
 
+    return name, layer
+
+
+@dispatch
+def build_norm_layer(cfg: NormConfig, num_features: int, postfix="") -> tuple[str, nn.Module]:
+    """根据 pydantic NormConfig 构建归一化层."""
+    name = cfg.type.lower() + str(postfix)
+    extra = {k: v for k, v in cfg.model_extra.items()} if cfg.model_extra else {}
+    if cfg.type == "GN":
+        layer = nn.GroupNorm(cfg.num_groups, num_features, **extra)
+    elif cfg.type == "LN":
+        layer = nn.LayerNorm(num_features, **extra)
+    else:
+        layer = _NORM[cfg.type](num_features, **extra)
     return name, layer
 
 
@@ -162,6 +257,7 @@ def xavier_init(module, gain=1, bias=0.0, distribution="uniform"):
 
 
 __all__ = [
+    "ConvConfig", "NormConfig", "ActConfig",
     "build_conv_layer", "ConvModule",
     "build_norm_layer",
     "trunc_normal_init", "constant_init", "kaiming_init", "xavier_init",

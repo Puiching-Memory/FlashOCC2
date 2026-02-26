@@ -19,9 +19,18 @@ def get_dist_info() -> tuple[int, int]:
 def init_dist(launcher: str = "pytorch", backend: str = "nccl", **kwargs):
     """初始化分布式训练."""
     if launcher == "pytorch":
-        rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", 0)))
-        torch.cuda.set_device(rank)
-        dist.init_process_group(backend=backend, **kwargs)
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+
+        if backend == "nccl" and torch.cuda.is_available():
+            device_id = torch.device("cuda", local_rank)
+            try:
+                dist.init_process_group(backend=backend, device_id=device_id, **kwargs)
+            except TypeError:
+                dist.init_process_group(backend=backend, **kwargs)
+        else:
+            dist.init_process_group(backend=backend, **kwargs)
 
     elif launcher == "slurm":
         proc_id = int(os.environ.get("SLURM_PROCID", 0))

@@ -41,7 +41,7 @@ class Registry:
             REGISTRY.register(SomeClass)
         """
         # 直接作为装饰器 @REGISTRY.register
-        if cls_or_name is None or isinstance(cls_or_name, str):
+        if cls_or_name is None or (hasattr(cls_or_name, 'upper') and callable(cls_or_name.upper)):
             name = cls_or_name
 
             def wrapper(cls):
@@ -88,15 +88,15 @@ class Registry:
         # 将 Config / DictConfig / ListConfig 转为纯 Python 容器
         if hasattr(cfg, 'to_dict'):
             cfg = cfg.to_dict()
-        else:
+        elif hasattr(cfg, '_metadata'):
+            # OmegaConf DictConfig: has _metadata attribute
             try:
-                from omegaconf import OmegaConf, DictConfig
-                if isinstance(cfg, DictConfig):
-                    cfg = OmegaConf.to_container(cfg, resolve=True)
-                else:
-                    cfg = copy.deepcopy(cfg)
+                from omegaconf import OmegaConf
+                cfg = OmegaConf.to_container(cfg, resolve=True)
             except ImportError:
                 cfg = copy.deepcopy(cfg)
+        else:
+            cfg = copy.deepcopy(cfg)
         if default_args:
             for k, v in default_args.items():
                 cfg.setdefault(k, v)

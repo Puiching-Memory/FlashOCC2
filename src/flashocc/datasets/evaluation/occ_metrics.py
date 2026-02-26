@@ -54,6 +54,7 @@ class Metric_mIoU:
             num_classes=num_classes,
             average=None,  # per-class IoU
             ignore_index=255,
+            sync_on_compute=False,
         )
         self.cnt = 0
 

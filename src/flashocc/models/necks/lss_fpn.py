@@ -5,11 +5,12 @@ from flashocc.core.nn import build_norm_layer
 
 from torch.utils.checkpoint import checkpoint
 from flashocc.core.nn import ConvModule
+from flashocc.core import BaseModule
 from flashocc.models import NECKS
 
 
 @NECKS.register_module()
-class FPN_LSS(nn.Module):
+class FPN_LSS(BaseModule):
     def __init__(self,
                  in_channels,
                  out_channels,
@@ -18,8 +19,9 @@ class FPN_LSS(nn.Module):
                  norm_cfg=dict(type='BN'),
                  extra_upsample=2,
                  lateral=None,
-                 use_input_conv=False):
-        super(FPN_LSS, self).__init__()
+                 use_input_conv=False,
+                 init_cfg=None):
+        super(FPN_LSS, self).__init__(init_cfg=init_cfg)
         self.input_feature_index = input_feature_index
         self.extra_upsample = extra_upsample is not None
         self.out_channels = out_channels

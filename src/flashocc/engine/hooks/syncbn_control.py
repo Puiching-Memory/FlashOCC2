@@ -1,9 +1,23 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from pydantic import BaseModel, field_validator
+
 from flashocc.core.hooks import HOOKS, Hook
 from .utils import is_parallel
 from torch.nn import SyncBatchNorm
 
 __all__ = ['SyncbnControlHook']
+
+
+class SyncbnControlConfig(BaseModel):
+    """SyncBN 控制钩子配置."""
+    syncbn_start_epoch: int = 1
+
+    @field_validator("syncbn_start_epoch")
+    @classmethod
+    def _epoch_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"syncbn_start_epoch 不能为负, 收到 {v}")
+        return v
 
 
 @HOOKS.register_module()
@@ -12,8 +26,9 @@ class SyncbnControlHook(Hook):
 
     def __init__(self, syncbn_start_epoch=1):
         super().__init__()
-        self.is_syncbn=False
-        self.syncbn_start_epoch = syncbn_start_epoch
+        cfg = SyncbnControlConfig(syncbn_start_epoch=syncbn_start_epoch)
+        self.is_syncbn = False
+        self.syncbn_start_epoch = cfg.syncbn_start_epoch
 
     def cvt_syncbn(self, runner):
         if is_parallel(runner.model.module):

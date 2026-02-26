@@ -1,23 +1,46 @@
 """数据管线基础: to_tensor, LoadImageFromFile, LoadAnnotations."""
+
 import numpy as np
 import torch
 from PIL import Image
+from plum import dispatch
 
 
-def to_tensor(data):
+@dispatch
+def to_tensor(data: torch.Tensor):
     """将数据转换为 torch.Tensor."""
-    if isinstance(data, torch.Tensor):
-        return data
-    elif isinstance(data, np.ndarray):
-        return torch.from_numpy(data)
-    elif isinstance(data, (list, tuple)):
-        return torch.tensor(data)
-    elif isinstance(data, int):
-        return torch.LongTensor([data])
-    elif isinstance(data, float):
-        return torch.FloatTensor([data])
-    else:
-        raise TypeError(f"Cannot convert type {type(data)} to tensor")
+    return data
+
+
+@dispatch
+def to_tensor(data: np.ndarray):
+    return torch.from_numpy(data)
+
+
+@dispatch
+def to_tensor(data: list):
+    return torch.tensor(data)
+
+
+@dispatch
+def to_tensor(data: tuple):
+    return torch.tensor(data)
+
+
+@dispatch
+def to_tensor(data: int):
+    return torch.LongTensor([data])
+
+
+@dispatch
+def to_tensor(data: float):
+    return torch.FloatTensor([data])
+
+
+@dispatch
+def to_tensor(data: object):
+    """将数据转换为 torch.Tensor."""
+    raise TypeError(f"Cannot convert type {type(data)} to tensor")
 
 
 class LoadImageFromFile:

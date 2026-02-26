@@ -6,10 +6,7 @@ import numpy as np
 class BaseInstance3DBoxes:
     """3D 边界框基类."""
     def __init__(self, tensor, box_dim=7, with_yaw=True, origin=(0.5, 0.5, 0)):
-        if isinstance(tensor, np.ndarray):
-            tensor = torch.from_numpy(tensor).float()
-        elif isinstance(tensor, (list, tuple)):
-            tensor = torch.tensor(tensor, dtype=torch.float32)
+        tensor = torch.as_tensor(tensor, dtype=torch.float32)
         if tensor.numel() == 0:
             tensor = tensor.reshape(0, box_dim)
         self.tensor = tensor

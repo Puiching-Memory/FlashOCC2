@@ -4,12 +4,13 @@ import torch.utils.checkpoint as checkpoint
 from torch import nn
 
 from flashocc.core.nn import ConvModule
+from flashocc.core import BaseModule
 from flashocc.models.backbones._resnet_base import BasicBlock, Bottleneck
 from flashocc.models import BACKBONES
 
 
 @BACKBONES.register_module()
-class CustomResNet(nn.Module):
+class CustomResNet(BaseModule):
     def __init__(
             self,
             numC_input,
@@ -20,8 +21,9 @@ class CustomResNet(nn.Module):
             norm_cfg=dict(type='BN'),
             with_cp=False,
             block_type='Basic',
+            init_cfg=None,
     ):
-        super(CustomResNet, self).__init__()
+        super(CustomResNet, self).__init__(init_cfg=init_cfg)
         # build backbone
         assert len(num_layer) == len(stride)
         num_channels = [numC_input*2**(i+1) for i in range(len(num_layer))] \

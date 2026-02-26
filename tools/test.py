@@ -11,6 +11,7 @@ import sys
 import pickle
 
 import torch
+import torch.distributed as dist
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -41,6 +42,23 @@ def parse_args():
     return parser.parse_args()
 
 
+def collect_results_gpu(result_part, size):
+    rank, world_size = get_dist_info()
+    if world_size == 1:
+        return result_part
+
+    part_list = [None for _ in range(world_size)]
+    dist.all_gather_object(part_list, result_part)
+
+    if rank != 0:
+        return None
+
+    ordered_results = []
+    for packed in zip(*part_list):
+        ordered_results.extend(list(packed))
+    return ordered_results[:size]
+
+
 def main():
     args = parse_args()
 
@@ -61,6 +79,7 @@ def main():
         dataset, samples_per_gpu=1,
         workers_per_gpu=exp.workers_per_gpu,
         dist_mode=distributed,
+        shuffle=False,
     )
 
     # 构建模型
@@ -72,6 +91,8 @@ def main():
     logger.info("开始测试...")
     results = single_gpu_test(model, data_loader, show=args.show,
                               out_dir=args.show_dir)
+    if distributed:
+        results = collect_results_gpu(results, len(dataset))
 
     # 保存
     if args.out and rank == 0:

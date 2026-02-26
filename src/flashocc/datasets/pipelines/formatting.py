@@ -40,7 +40,7 @@ class DefaultFormatBundle(object):
                 default bundle.
         """
         if 'img' in results:
-            if isinstance(results['img'], list):
+            if hasattr(results['img'], '__iter__') and not hasattr(results['img'], 'shape'):
                 # process multiple imgs in single frame
                 imgs = [img.transpose(2, 0, 1) for img in results['img']]
                 imgs = np.ascontiguousarray(np.stack(imgs, axis=0))
@@ -55,12 +55,13 @@ class DefaultFormatBundle(object):
         ]:
             if key not in results:
                 continue
-            if isinstance(results[key], list):
+            if hasattr(results[key], '__iter__') and not hasattr(results[key], 'shape'):
                 results[key] = DC([to_tensor(res) for res in results[key]])
             else:
                 results[key] = DC(to_tensor(results[key]))
         if 'gt_bboxes_3d' in results:
-            if isinstance(results['gt_bboxes_3d'], BaseInstance3DBoxes):
+            if hasattr(results['gt_bboxes_3d'], 'tensor'):
+                # BaseInstance3DBoxes has .tensor attribute
                 results['gt_bboxes_3d'] = DC(
                     results['gt_bboxes_3d'], cpu_only=True)
             else:
@@ -204,7 +205,8 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
         """
         # Format 3D data
         if 'points' in results:
-            assert isinstance(results['points'], BasePoints)
+            assert hasattr(results['points'], 'tensor'), \
+                f"results['points'] must have .tensor attribute, got {type(results['points'])}"
             results['points'] = DC(results['points'].tensor)
 
         for key in ['voxels', 'coors', 'voxel_centers', 'num_points']:
@@ -235,8 +237,8 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
                 if 'gt_names' in results and len(results['gt_names']) == 0:
                     results['gt_labels'] = np.array([], dtype=np.int64)
                     results['attr_labels'] = np.array([], dtype=np.int64)
-                elif 'gt_names' in results and isinstance(
-                        results['gt_names'][0], list):
+                elif 'gt_names' in results and hasattr(
+                        results['gt_names'][0], '__iter__'):
                     # gt_labels might be a list of list in multi-view setting
                     results['gt_labels'] = [
                         np.array([self.class_names.index(n) for n in res],

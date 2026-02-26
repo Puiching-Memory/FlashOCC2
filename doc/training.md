@@ -47,8 +47,8 @@ python tools/train.py <config> [options]
 
 训练前需下载 BEVDet 预训练权重到 `ckpts/` 目录：
 
-| 模型 | 文件 |
-|------|------|
+| 模型            | 文件                        |
+| --------------- | --------------------------- |
 | BEVDet-R50-CBGS | `ckpts/bevdet-r50-cbgs.pth` |
 
 权重来源：[BEVDet](https://github.com/HuangJunJie2017/BEVDet)
@@ -78,13 +78,13 @@ work_dirs/flashocc_r50/
 
 ## 训练参数参考（FlashOCC-R50）
 
-| 参数 | 值 |
-|------|---|
-| batch_size | 4 × GPU 数 |
-| 学习率 | 1e-4 |
-| 优化器 | AdamW (weight_decay=1e-2) |
-| 学习率策略 | Step (step=[24]) |
-| 梯度裁剪 | max_norm=5 |
-| EMA | init_updates=10560 |
-| Epoch | 24 |
-| 训练时间 | ~10h (4×A100) |
+| 参数       | 值                        |
+| ---------- | ------------------------- |
+| batch_size | 4 × GPU 数                |
+| 学习率     | 1e-4                      |
+| 优化器     | AdamW (weight_decay=1e-2) |
+| 学习率策略 | Step (step=[24])          |
+| 梯度裁剪   | max_norm=5                |
+| EMA        | init_updates=10560        |
+| Epoch      | 24                        |
+| 训练时间   | ~10h (4×A100)             |

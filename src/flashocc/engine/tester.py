@@ -1,6 +1,7 @@
 """测试引擎."""
 import torch
 from flashocc.core.log import progress_bar
+from .trainer import scatter_data
 
 
 @torch.no_grad()
@@ -19,8 +20,9 @@ def single_gpu_test(model, data_loader, show=False, out_dir=None, **kwargs):
     model.eval()
     results = []
     for data in progress_bar(data_loader, desc="Testing"):
+        data = scatter_data(data)
         result = model(return_loss=False, **data)
-        if isinstance(result, list):
+        if hasattr(result, '__iter__') and not hasattr(result, 'keys') and not hasattr(result, 'shape'):
             results.extend(result)
         else:
             results.append(result)

@@ -6,8 +6,7 @@ import numpy as np
 class BasePoints:
     """3D 点基类."""
     def __init__(self, tensor, points_dim=3, attribute_dims=None):
-        if isinstance(tensor, np.ndarray):
-            tensor = torch.from_numpy(tensor).float()
+        tensor = torch.as_tensor(tensor).float()
         self.tensor = tensor
         self.points_dim = points_dim
         self.attribute_dims = attribute_dims or {}

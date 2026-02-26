@@ -21,6 +21,8 @@ dependencies = [
     "torchmetrics>=1.6",
     "scikit-learn>=1.5",
     "termcolor>=2.4",
+    "pydantic>=2.10",
+    "plum-dispatch>=2.5",
 ]
 
 [build-system]

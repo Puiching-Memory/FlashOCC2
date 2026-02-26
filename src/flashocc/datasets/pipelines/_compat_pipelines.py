@@ -20,7 +20,8 @@ class LoadPointsFromFile:
         self.load_dim = load_dim
         if use_dim is None:
             self.use_dim = list(range(load_dim))
-        elif isinstance(use_dim, int):
+        elif hasattr(use_dim, '__index__'):
+            # int-like: has __index__ method
             self.use_dim = list(range(use_dim))
         else:
             self.use_dim = list(use_dim)

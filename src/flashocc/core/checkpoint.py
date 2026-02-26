@@ -11,22 +11,8 @@ import torch.nn as nn
 
 from flashocc.core.log import logger
 
-# 常见 torchvision 预训练模型 URL
-_TORCHVISION_URLS = {
-    "resnet18": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
-    "resnet34": "https://download.pytorch.org/models/resnet34-b627a593.pth",
-    "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
-    "resnet101": "https://download.pytorch.org/models/resnet101-63fe2227.pth",
-    "resnet152": "https://download.pytorch.org/models/resnet152-394f9c45.pth",
-}
-
-
 def _load_checkpoint_raw(filename: str, map_location=None):
-    """从文件 / URL / torchvision:// 加载 checkpoint."""
-    if filename.startswith("torchvision://"):
-        model_name = filename[len("torchvision://"):]
-        url = _TORCHVISION_URLS.get(model_name, "")
-        return torch.hub.load_state_dict_from_url(url, map_location=map_location)
+    """从文件 / URL 加载 checkpoint."""
     if filename.startswith(("http://", "https://")):
         return torch.hub.load_state_dict_from_url(filename, map_location=map_location)
     return torch.load(filename, map_location=map_location, weights_only=False)
@@ -65,9 +51,7 @@ def load_checkpoint(model: nn.Module, filename: str, map_location=None,
     """加载检查点到模型."""
     ckpt = _load_checkpoint_raw(filename, map_location=map_location)
 
-    if isinstance(ckpt, OrderedDict):
-        state_dict = ckpt
-    elif isinstance(ckpt, dict):
+    if hasattr(ckpt, 'keys'):
         state_dict = ckpt.get("state_dict", ckpt.get("model", ckpt))
     else:
         raise RuntimeError(f"不支持的 checkpoint 类型: {type(ckpt)}")

@@ -85,6 +85,13 @@ def main():
     model = exp.build_model()
     logger.info(f"模型: {model.__class__.__name__}")
 
+    # 子模块 init_cfg 预训练权重加载
+    for name, m in model.named_modules():
+        if hasattr(m, 'init_weights') and callable(m.init_weights):
+            if getattr(m, '_raw_init_cfg', None) is not None:
+                logger.info(f"加载子模块预训练: {name}")
+                m.init_weights()
+
     # 加载预训练
     if exp.load_from:
         logger.info(f"加载预训练: {exp.load_from}")

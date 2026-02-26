@@ -83,11 +83,11 @@ FlashOCC/
 
 核心依赖（完整列表见 `pyproject.toml`）：
 
-| 包 | 版本要求 | 用途 |
-|----|---------|------|
-| torch | >= 2.5 | 深度学习框架 |
-| torchvision | >= 0.20 | 图像处理、ResNet 预训练 |
-| nuscenes-devkit | >= 1.2.0 | NuScenes 数据集 API |
-| numpy | >= 1.26 | 数值计算 |
-| timm | >= 1.0 | 模型组件 |
-| ninja | >= 1.11 | CUDA 扩展 JIT 编译 |
+| 包              | 版本要求 | 用途                    |
+| --------------- | -------- | ----------------------- |
+| torch           | >= 2.5   | 深度学习框架            |
+| torchvision     | >= 0.20  | 图像处理、ResNet 预训练 |
+| nuscenes-devkit | >= 1.2.0 | NuScenes 数据集 API     |
+| numpy           | >= 1.26  | 数值计算                |
+| timm            | >= 1.0   | 模型组件                |
+| ninja           | >= 1.11  | CUDA 扩展 JIT 编译      |

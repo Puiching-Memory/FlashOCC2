@@ -76,7 +76,7 @@ class CustomFPN(BaseModule):
                  init_cfg=dict(
                      type='Xavier', layer='Conv2d', distribution='uniform')):
         super(CustomFPN, self).__init__(init_cfg)
-        assert isinstance(in_channels, list)
+        assert hasattr(in_channels, '__iter__'), f"in_channels must be a list, got {type(in_channels)}"
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.num_ins = len(in_channels)
@@ -97,9 +97,9 @@ class CustomFPN(BaseModule):
         self.start_level = start_level
         self.end_level = end_level
         self.add_extra_convs = add_extra_convs
-        assert isinstance(add_extra_convs, (str, bool))
-        if isinstance(add_extra_convs, str):
-            # Extra_convs_source choices: 'on_input', 'on_lateral', 'on_output'
+        assert hasattr(add_extra_convs, '__hash__'), f"add_extra_convs must be str or bool, got {type(add_extra_convs)}"
+        if hasattr(add_extra_convs, 'upper'):
+            # str case
             assert add_extra_convs in ('on_input', 'on_lateral', 'on_output')
         elif add_extra_convs:  # True
             self.add_extra_convs = 'on_input'

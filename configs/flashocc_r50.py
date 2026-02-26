@@ -6,11 +6,11 @@ BEVDetOCC + ResNet50 占用预测模型完整实验描述。
 """
 from __future__ import annotations
 
-import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import MultiStepLR
 
 from flashocc.config import Lazy, Experiment, DataConfig, GridConfig, BDAAugConfig
+from flashocc.core.base_module import PretrainedInit
 
 # ------ 模型组件 (import 即安全) ------
 from flashocc.models.backbones._resnet_base import ResNet
@@ -85,7 +85,7 @@ model = Lazy(BEVDetOCC,
         norm_eval=False,
         with_cp=True,
         style="pytorch",
-        pretrained="torchvision://resnet50",
+        pretrained=True,
     ),
     img_neck=Lazy(CustomFPN,
         in_channels=[1024, 2048],
@@ -93,6 +93,7 @@ model = Lazy(BEVDetOCC,
         num_outs=1,
         start_level=0,
         out_ids=[0],
+        init_cfg=PretrainedInit(checkpoint="ckpts/img_neck.pth"),
     ),
     img_view_transformer=Lazy(LSSViewTransformer,
         grid_config=grid_config,
@@ -102,14 +103,17 @@ model = Lazy(BEVDetOCC,
         sid=False,
         collapse_z=True,
         downsample=16,
+        init_cfg=PretrainedInit(checkpoint="ckpts/img_view_transformer.pth"),
     ),
     img_bev_encoder_backbone=Lazy(CustomResNet,
         numC_input=numC_Trans,
         num_channels=[numC_Trans * 2, numC_Trans * 4, numC_Trans * 8],
+        init_cfg=PretrainedInit(checkpoint="ckpts/img_bev_encoder_backbone.pth"),
     ),
     img_bev_encoder_neck=Lazy(FPN_LSS,
         in_channels=numC_Trans * 8 + numC_Trans * 2,
         out_channels=256,
+        init_cfg=PretrainedInit(checkpoint="ckpts/img_bev_encoder_neck.pth"),
     ),
     occ_head=Lazy(BEVOCCHead2D,
         in_dim=256,
@@ -167,11 +171,11 @@ test_pipeline = [
 #  数据集
 # =====================================================================
 
-_DATA_ROOT = "data/nuscenes/"
+_DATA_ROOT = "data/nuScenes/"
 
 train_data = Lazy(NuScenesDatasetOccpancy,
     data_root=_DATA_ROOT,
-    ann_file=_DATA_ROOT + "bevdetv2-nuscenes_infos_train.pkl",
+    ann_file="data/flashocc2-nuscenes_infos_train.pkl",
     classes=class_names,
     modality=dict(use_camera=True, use_lidar=True, use_radar=False, use_map=False, use_external=False),
     pipeline=train_pipeline,
@@ -185,7 +189,7 @@ train_data = Lazy(NuScenesDatasetOccpancy,
 
 val_data = Lazy(NuScenesDatasetOccpancy,
     data_root=_DATA_ROOT,
-    ann_file=_DATA_ROOT + "bevdetv2-nuscenes_infos_val.pkl",
+    ann_file="data/flashocc2-nuscenes_infos_val.pkl",
     classes=class_names,
     modality=dict(use_camera=True, use_lidar=True, use_radar=False, use_map=False, use_external=False),
     pipeline=test_pipeline,
@@ -205,6 +209,11 @@ experiment = Experiment(
 
     samples_per_gpu=4,
     workers_per_gpu=4,
+    dataloader_pin_memory=True,
+    dataloader_persistent_workers=True,
+    dataloader_prefetch_factor=2,
+    dataloader_drop_last=False,
+    dataloader_non_blocking=True,
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
     lr_scheduler=Lazy(MultiStepLR, milestones=[24], gamma=0.1),
@@ -213,7 +222,7 @@ experiment = Experiment(
     grad_max_norm=5.0,
 
     max_epochs=24,
-    load_from="ckpts/bevdet-r50-cbgs.pth",
+    # load_from="ckpts/bevdet-r50-cbgs.pth",
 
     checkpoint_interval=1,
     max_keep_ckpts=5,
@@ -222,4 +231,16 @@ experiment = Experiment(
 
     log_interval=50,
     seed=0,
+    cudnn_benchmark=True,
+    allow_tf32=True,
+    float32_matmul_precision="high",
+    optimizer_set_to_none=True,
+
+    # ---- 性能优化 (profiling 结果指导) ----
+    use_amp=True,                     # BF16 混合精度 — conv/BN 加速 ~2-3x
+    amp_dtype="bfloat16",             # H800 原生支持 BF16
+    use_channels_last=True,           # 消除 NCHW ↔ NHWC 转换开销 (~250ms/iter)
+    use_compile=False,                # torch.compile (可选, 首次编译较慢)
+    compile_backend="inductor",
+    compile_mode="reduce-overhead",
 )

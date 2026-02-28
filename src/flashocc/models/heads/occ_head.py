@@ -128,3 +128,14 @@ class BEVOCCHead2D(BaseModule):
         occ_res = occ_score.argmax(-1)
         occ_res = occ_res.cpu().numpy().astype(np.uint8)
         return list(occ_res)
+
+    def get_occ_gpu(self, occ_pred, img_metas=None):
+        """纯 GPU 端 argmax — 返回 GPU tensor, 避免 CUDA graph 分区.
+
+        Args:
+            occ_pred: (B, Dx, Dy, Dz, C)
+        Returns:
+            torch.Tensor: (B, Dx, Dy, Dz) int64, 保持在 GPU.
+            GPU→CPU 转换由调用方 (tester) 在编译图之外完成.
+        """
+        return occ_pred.argmax(-1)  # (B, Dx, Dy, Dz), 纯 GPU 操作

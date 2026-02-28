@@ -153,14 +153,12 @@ test_pipeline = [
          data_config=data_config, sequential=False),
     Lazy(LoadAnnotationsBEVDepth,
          bda_aug_conf=bda_aug_conf, classes=class_names, is_train=False),
-    Lazy(LoadPointsFromFile,
-         coord_type="LIDAR", load_dim=5, use_dim=5),
     Lazy(MultiScaleFlipAug3D,
          img_scale=[1333, 800], pts_scale_ratio=1, flip=False,
          transforms=[
              Lazy(DefaultFormatBundle3D,
                   class_names=class_names, with_label=False),
-             Lazy(Collect3D, keys=["points", "img_inputs",
+             Lazy(Collect3D, keys=["img_inputs",
                                    "jpeg_bytes", "img_aug_params"]),
          ]),
 ]

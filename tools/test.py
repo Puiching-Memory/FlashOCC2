@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 """FlashOCC 测试脚本.
 
-:
-    python tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth
-    torchrun --nproc_per_node=4 tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth
+用法:
+    python tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth --eval occ
+    torchrun --nproc_per_node=4 tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth --eval occ
+
+性能优化参数 (AMP / channels_last / torch.compile / cudnn.benchmark / TF32)
+自动从配置文件的 Experiment 对象中读取, 无需额外命令行参数。
 """
 import argparse
 import os
@@ -24,7 +27,9 @@ from flashocc.config import load_experiment
 from flashocc.core import init_dist, get_dist_info, load_checkpoint
 from flashocc.core.log import logger, setup_logger
 from flashocc.engine import single_gpu_test
-from flashocc.engine.trainer import build_dataloader
+from flashocc.engine.trainer import (
+    build_dataloader, _setup_torch_runtime, _get_amp_dtype,
+)
 
 
 def parse_args():
@@ -59,6 +64,22 @@ def collect_results_gpu(result_part, size):
     return ordered_results[:size]
 
 
+def _setup_model_for_test(model, exp):
+    """根据 Experiment 配置, 为测试模型启用性能优化.
+
+    注: torch.compile 在测试时不启用 — 推理只跑一遍, 编译开销 + CUDA graph
+    分区问题得不偿失。AMP / channels_last 零开销, 保持启用。
+    """
+    model = model.cuda()
+
+    # ---- channels_last 内存格式 ----
+    if exp.use_channels_last:
+        model = model.to(memory_format=torch.channels_last)
+        logger.info("启用 channels_last 内存格式")
+
+    return model
+
+
 def main():
     args = parse_args()
 
@@ -71,6 +92,17 @@ def main():
 
     setup_logger(level="INFO", rank0_only=True)
 
+    # ---- 从配置读取运行时优化参数 ----
+    _setup_torch_runtime(exp)
+    amp_dtype = _get_amp_dtype(exp)
+    logger.info(
+        f"运行时配置: AMP={exp.use_amp} (dtype={exp.amp_dtype}), "
+        f"channels_last={exp.use_channels_last}, "
+        f"compile=disabled (test), "
+        f"cudnn_benchmark={exp.cudnn_benchmark}, "
+        f"allow_tf32={exp.allow_tf32}"
+    )
+
     # 构建测试数据集
     dataset = exp.build_test_dataset()
     logger.info(f"测试集: {dataset.__class__.__name__} ({len(dataset)} 样本)")
@@ -82,15 +114,20 @@ def main():
         shuffle=False,
     )
 
-    # 构建模型
+    # 构建模型 (读取配置中的优化参数)
     model = exp.build_model()
     load_checkpoint(model, args.checkpoint, map_location="cpu")
-    model = model.cuda()
+    model = _setup_model_for_test(model, exp)
 
     # 测试
     logger.info("开始测试...")
-    results = single_gpu_test(model, data_loader, show=args.show,
-                              out_dir=args.show_dir)
+    results = single_gpu_test(
+        model, data_loader,
+        show=args.show, out_dir=args.show_dir,
+        amp_dtype=amp_dtype,
+        use_channels_last=exp.use_channels_last,
+        non_blocking=exp.dataloader_non_blocking,
+    )
     if distributed:
         results = collect_results_gpu(results, len(dataset))
 

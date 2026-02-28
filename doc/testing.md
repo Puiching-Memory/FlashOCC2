@@ -9,12 +9,12 @@ python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth
 ## 多 GPU 测试
 
 ```bash
-torchrun --nproc_per_node=4 tools/test.py \
+torchrun --nproc_per_node=8 tools/test.py \
     configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth \
     --launcher pytorch --eval occ
 
 # 使用便捷脚本
-bash tools/dist_test.sh configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth 4 --eval occ
+bash tools/dist_test.sh configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth 8 --eval occ
 ```
 
 ## 命令行参数

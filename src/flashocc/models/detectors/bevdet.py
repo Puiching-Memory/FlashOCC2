@@ -1,7 +1,6 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch
 import torch.nn.functional as F
-from flashocc.core import force_fp32
 
 from flashocc.models import DETECTORS
 from flashocc.models.detectors.base import MVXTwoStageDetector
@@ -42,7 +41,6 @@ class BEVDet(MVXTwoStageDetector):
         x = x.view(B, N, output_dim, ouput_H, output_W)
         return x, stereo_feat
 
-    @force_fp32()
     def bev_encoder(self, x):
         """
         Args:

@@ -14,10 +14,7 @@ import torch
 from sklearn.neighbors import KDTree
 from termcolor import colored
 
-try:
-    from torchmetrics.classification import MulticlassJaccardIndex
-except ImportError:
-    raise ImportError("请安装 torchmetrics: pip install torchmetrics")
+from torchmetrics.classification import MulticlassJaccardIndex
 
 from flashocc.constants import (
     OCC_CLASS_NAMES, POINT_CLOUD_RANGE, OCCUPANCY_SIZE, VOXEL_SIZE,

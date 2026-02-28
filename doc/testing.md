@@ -51,15 +51,15 @@ python tools/test.py configs/flashocc_r50.py epoch_24.pth --out results/flashocc
 
 | ID  | 类别                 | ID  | 类别              |
 | --- | -------------------- | --- | ----------------- |
-| 0   | others               | 9   | traffic_cone      |
-| 1   | barrier              | 10  | trailer           |
-| 2   | bicycle              | 11  | truck             |
-| 3   | bus                  | 12  | driveable_surface |
-| 4   | car                  | 13  | other_flat        |
-| 5   | construction_vehicle | 14  | sidewalk          |
-| 6   | motorcycle           | 15  | terrain           |
-| 7   | pedestrian           | 16  | manmade           |
-| 8   | traffic_cone         | 17  | vegetation        |
+| 0   | others               | 9   | trailer           |
+| 1   | barrier              | 10  | truck             |
+| 2   | bicycle              | 11  | driveable_surface |
+| 3   | bus                  | 12  | other_flat        |
+| 4   | car                  | 13  | sidewalk          |
+| 5   | construction_vehicle | 14  | terrain           |
+| 6   | motorcycle           | 15  | manmade           |
+| 7   | pedestrian           | 16  | vegetation        |
+| 8   | traffic_cone         | 17  | free              |
 
 完整类别列表定义在 `src/flashocc/constants.py` 的 `OCC_CLASS_NAMES` 中。
 

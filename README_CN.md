@@ -12,7 +12,7 @@ uv venv .venv --python 3.12 && source .venv/bin/activate
 uv sync
 
 # 准备数据（见 doc/nuscenes_data.md）
-python tools/create_data_bevdet.py
+python tools/create_data_flashocc2.py
 
 # 训练（单 GPU）
 python tools/train.py configs/flashocc_r50.py
@@ -22,6 +22,9 @@ torchrun --nproc_per_node=4 tools/train.py configs/flashocc_r50.py
 
 # 测试
 python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth --eval occ
+
+# 统计数据集类别分布
+python tools/analyze_class_distribution.py data/flashocc2-nuscenes_infos_train.pkl --no-show
 ```
 
 ## 项目结构
@@ -42,7 +45,7 @@ FlashOCC/
 │   │   ├── nn.py             # ConvModule, build_conv/norm_layer, 初始化
 │   │   ├── registry.py       # 注册表模式
 │   │   ├── bbox/             # 3D 边界框 & 点类
-│   │   └── ops/              # CUDA 算子（bev_pool_v2）
+│   │   └── ops/              # CUDA 算子（bev_pool_v2, bev_pool_v3）
 │   ├── datasets/             # 数据加载与评估
 │   │   ├── base_dataset.py   # Custom3DDataset 基类
 │   │   ├── nuscenes_occ.py   # NuScenesOccDataset（占用评估）
@@ -65,9 +68,10 @@ FlashOCC/
 ├── tools/                    # 命令行脚本
 │   ├── train.py              # 训练入口
 │   ├── test.py               # 测试入口
+│   ├── analyze_class_distribution.py  # 数据集类别分布分析
 │   ├── dist_train.sh         # 多 GPU 训练脚本
 │   ├── dist_test.sh          # 多 GPU 测试脚本
-│   └── create_data_bevdet.py # 数据准备
+│   └── create_data_flashocc2.py # 数据准备
 ├── data/nuscenes/            # 数据集（不被 git 跟踪）
 ├── ckpts/                    # 预训练权重
 └── pyproject.toml            # 依赖与构建配置

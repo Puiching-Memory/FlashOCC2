@@ -12,7 +12,7 @@ uv venv .venv --python 3.12 && source .venv/bin/activate
 uv sync
 
 # Prepare data (see doc/nuscenes_data.md)
-python tools/create_data_bevdet.py
+python tools/create_data_flashocc2.py
 
 # Train (single GPU)
 python tools/train.py configs/flashocc_r50.py
@@ -22,6 +22,9 @@ torchrun --nproc_per_node=4 tools/train.py configs/flashocc_r50.py
 
 # Test
 python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth --eval occ
+
+# Analyze dataset class distribution
+python tools/analyze_class_distribution.py data/flashocc2-nuscenes_infos_train.pkl --no-show
 ```
 
 ## Project Structure
@@ -42,7 +45,7 @@ FlashOCC/
 │   │   ├── nn.py             # ConvModule, build_conv/norm_layer, init
 │   │   ├── registry.py       # Registry pattern
 │   │   ├── bbox/             # 3D bounding box & point classes
-│   │   └── ops/              # CUDA ops (bev_pool_v2)
+│   │   └── ops/              # CUDA ops (bev_pool_v2, bev_pool_v3)
 │   ├── datasets/             # Data loading & evaluation
 │   │   ├── base_dataset.py   # Custom3DDataset base class
 │   │   ├── nuscenes_occ.py   # NuScenesOccDataset (OCC evaluation)
@@ -65,9 +68,10 @@ FlashOCC/
 ├── tools/                    # CLI scripts
 │   ├── train.py              # Training entry point
 │   ├── test.py               # Testing entry point
+│   ├── analyze_class_distribution.py  # Dataset class distribution analysis
 │   ├── dist_train.sh         # Multi-GPU training wrapper
 │   ├── dist_test.sh          # Multi-GPU testing wrapper
-│   └── create_data_bevdet.py # Data preparation
+│   └── create_data_flashocc2.py # Data preparation
 ├── data/nuscenes/            # Dataset (not tracked by git)
 ├── ckpts/                    # Pretrained weights
 └── pyproject.toml            # Dependencies & build config

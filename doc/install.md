@@ -73,7 +73,7 @@ FlashOCC/
 │   ├── datasets/         # 数据集 & 评估
 │   ├── engine/           # 训练 / 测试引擎
 │   └── models/           # 模型定义
-├── tools/                # 训练 / 测试脚本
+├── tools/                # 训练 / 测试 / 分析脚本
 ├── data/nuscenes/        # 数据目录（不被 git 跟踪）
 ├── ckpts/                # 预训练权重
 └── pyproject.toml        # 依赖声明
@@ -91,3 +91,4 @@ FlashOCC/
 | numpy           | >= 1.26  | 数值计算                |
 | timm            | >= 1.0   | 模型组件                |
 | ninja           | >= 1.11  | CUDA 扩展 JIT 编译      |
+| matplotlib      | >= 3.8   | 类别分布可视化工具    |

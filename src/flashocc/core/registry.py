@@ -78,11 +78,8 @@ class Registry:
             cfg = cfg.to_dict()
         elif hasattr(cfg, '_metadata'):
             # OmegaConf DictConfig: has _metadata attribute
-            try:
-                from omegaconf import OmegaConf
-                cfg = OmegaConf.to_container(cfg, resolve=True)
-            except ImportError:
-                cfg = copy.deepcopy(cfg)
+            from omegaconf import OmegaConf
+            cfg = OmegaConf.to_container(cfg, resolve=True)
         else:
             cfg = copy.deepcopy(cfg)
         if default_args:

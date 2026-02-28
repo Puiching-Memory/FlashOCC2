@@ -127,10 +127,6 @@ class Experiment(BaseModel):
     checkpoint_interval: int = 1
     max_keep_ckpts: int = 5
 
-    # ---- 评估 ----
-    eval_interval: int = 1
-    eval_start: int = 20
-
     # ---- 运行时 ----
     work_dir: Optional[str] = None
     seed: int = 0
@@ -192,13 +188,6 @@ class Experiment(BaseModel):
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"warmup_ratio 应在 [0, 1], 收到 {v}")
         return v
-
-    @model_validator(mode="after")
-    def _eval_start_le_epochs(self) -> "Experiment":
-        if self.eval_start > self.max_epochs:
-            # 自动修正: eval_start 不超过 max_epochs
-            object.__setattr__(self, "eval_start", self.max_epochs)
-        return self
 
     # ================================================================
     #  构建方法

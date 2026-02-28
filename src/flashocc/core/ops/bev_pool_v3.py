@@ -6,17 +6,14 @@
   3. 独立 depth-backward 核函数 → 全点并行 (比 v2 多 100x+ 线程)
   4. FP16 输入 / FP32 累积 → 2× 带宽
   5. 融合 voxel_pooling_prepare → 1 kernel 代替 ~10 个 PyTorch ops
+  6. 预排序 feat intervals → backward 零 argsort 开销 (节省 ~2ms)
 """
 
 from __future__ import annotations
 
 import torch
 
-try:
-    from flashocc.core.ops._ext import bev_pool_v3_ext
-    _HAS_V3_CUDA = True
-except ImportError:
-    _HAS_V3_CUDA = False
+from flashocc.core.ops._ext import bev_pool_v3_ext
 
 __all__ = ["bev_pool_v3", "TRTBEVPoolv3"]
 
@@ -39,15 +36,19 @@ def _compute_feat_intervals(ranks_feat, ranks_depth, ranks_bev):
 
 
 class _BevPoolV3Cuda(torch.autograd.Function):
-    """Autograd wrapper for the v3 CUDA forward/backward kernels."""
+    """Autograd wrapper for the v3 CUDA forward/backward kernels.
+
+    When pre-computed feat intervals are provided via `feat_intervals`,
+    backward skips the expensive argsort + interval computation (~2ms savings).
+    """
 
     @staticmethod
     def forward(ctx, depth, feat, ranks_depth, ranks_feat, ranks_bev,
-                bev_feat_shape, interval_starts, interval_lengths):
+                bev_feat_shape, interval_starts, interval_lengths,
+                feat_intervals=None):
         ranks_bev = ranks_bev.int()
         # Align dtypes: under AMP, depth (softmax) may be float32 while
-        # feat (conv output) is bfloat16/float16. Cast depth to match feat
-        # so the CUDA kernel dispatches on a single consistent dtype.
+        # feat (conv output) is bfloat16/float16. Cast depth to match feat.
         if depth.dtype != feat.dtype:
             depth = depth.to(feat.dtype)
         depth = depth.contiguous()
@@ -66,6 +67,12 @@ class _BevPoolV3Cuda(torch.autograd.Function):
 
         ctx.save_for_backward(ranks_bev, depth, feat, ranks_feat, ranks_depth)
         ctx.n_points = ranks_bev.shape[0]
+
+        # Cache pre-computed feat intervals to avoid argsort in backward
+        if feat_intervals is not None:
+            ctx._feat_intervals = feat_intervals
+        else:
+            ctx._feat_intervals = None
         return out
 
     @staticmethod
@@ -73,14 +80,17 @@ class _BevPoolV3Cuda(torch.autograd.Function):
         ranks_bev, depth, feat, ranks_feat, ranks_depth = ctx.saved_tensors
         n_points = ctx.n_points
 
-        # Align dtypes: out_grad should match depth/feat dtype
+        # Align dtypes
         target_dtype = depth.dtype
         if out_grad.dtype != target_dtype:
             out_grad = out_grad.to(target_dtype)
 
-        # --- prepare feat-sorted indices for feat gradient ---
-        rd_fs, rf_fs, rb_fs, starts_fs, lengths_fs = \
-            _compute_feat_intervals(ranks_feat, ranks_depth, ranks_bev)
+        # --- Use pre-computed feat intervals if available ---
+        if ctx._feat_intervals is not None:
+            rd_fs, rf_fs, rb_fs, starts_fs, lengths_fs = ctx._feat_intervals
+        else:
+            rd_fs, rf_fs, rb_fs, starts_fs, lengths_fs = \
+                _compute_feat_intervals(ranks_feat, ranks_depth, ranks_bev)
 
         depth_grad = torch.zeros_like(depth, dtype=torch.float32)
         feat_grad = feat.new_zeros(feat.shape)
@@ -100,11 +110,12 @@ class _BevPoolV3Cuda(torch.autograd.Function):
         if depth.dtype != torch.float32:
             depth_grad = depth_grad.to(depth.dtype)
 
-        return depth_grad, feat_grad, None, None, None, None, None, None
+        return depth_grad, feat_grad, None, None, None, None, None, None, None
 
 
 def bev_pool_v3(depth, feat, ranks_depth, ranks_feat, ranks_bev,
-                bev_feat_shape, interval_starts, interval_lengths):
+                bev_feat_shape, interval_starts, interval_lengths,
+                feat_intervals=None):
     """BEV 池化 v3.
 
     Args:
@@ -116,12 +127,16 @@ def bev_pool_v3(depth, feat, ranks_depth, ranks_feat, ranks_bev,
         bev_feat_shape: tuple (B, Dz, Dy, Dx, C)
         interval_starts:  (N_intervals,) int
         interval_lengths: (N_intervals,) int
+        feat_intervals:   tuple or None — 预排序的 feat intervals,
+            格式: (rd_fs, rf_fs, rb_fs, starts_fs, lengths_fs)
+            提供时 backward 跳过 argsort (节省 ~2ms).
     Returns:
         (B, C, Dz, Dy, Dx)
     """
     x = _BevPoolV3Cuda.apply(
         depth, feat, ranks_depth, ranks_feat, ranks_bev,
-        bev_feat_shape, interval_starts, interval_lengths)
+        bev_feat_shape, interval_starts, interval_lengths,
+        feat_intervals)
     return x.permute(0, 4, 1, 2, 3).contiguous()
 
 

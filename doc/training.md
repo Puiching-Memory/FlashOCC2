@@ -73,6 +73,7 @@ work_dirs/flashocc_r50/
 ├── epoch_1.pth             # 各 epoch checkpoint
 ├── epoch_2.pth
 ├── ...
+├── epoch_24.pth
 └── epoch_24.pth
 ```
 
@@ -80,7 +81,7 @@ work_dirs/flashocc_r50/
 
 | 参数       | 值                        |
 | ---------- | ------------------------- |
-| batch_size | 4 × GPU 数                |
+| batch_size | 8 × GPU 数                |
 | 学习率     | 1e-4                      |
 | 优化器     | AdamW (weight_decay=1e-2) |
 | 学习率策略 | Step (step=[24])          |

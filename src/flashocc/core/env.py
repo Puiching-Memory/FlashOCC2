@@ -23,16 +23,13 @@ def collect_env() -> dict[str, str]:
         env["CUDA"] = torch.version.cuda or "N/A"
         env["GPU"] = torch.cuda.get_device_name(0)
         env["CUDA_HOME"] = os.environ.get("CUDA_HOME", "N/A")
-    try:
-        import torchvision
-        env["TorchVision"] = torchvision.__version__
-    except ImportError:
-        env["TorchVision"] = "N/A"
-    try:
-        import flashocc
-        env["FlashOCC"] = flashocc.__version__
-    except Exception:
-        env["FlashOCC"] = "unknown"
+
+    import torchvision
+    env["TorchVision"] = torchvision.__version__
+
+    import flashocc
+    env["FlashOCC"] = flashocc.__version__
+
     try:
         import subprocess
         gcc = subprocess.check_output("gcc --version", shell=True, text=True).split("\n")[0]

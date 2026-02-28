@@ -9,10 +9,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
 
-try:
-    import timm
-except ImportError:
-    raise ImportError("请安装 timm: pip install timm")
+import timm
 
 from flashocc.models import BACKBONES
 

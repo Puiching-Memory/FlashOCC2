@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import torch
 
-try:
-    from flashocc.core.ops._ext import bev_pool_v2_ext
-    _HAS_CUDA = True
-except ImportError:
-    _HAS_CUDA = False
+from flashocc.core.ops._ext import bev_pool_v2_ext
 
 __all__ = ["bev_pool_v2", "TRTBEVPoolv2"]
 

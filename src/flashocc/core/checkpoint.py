@@ -11,6 +11,43 @@ import torch.nn as nn
 
 from flashocc.core.log import logger
 
+
+def _normalize_state_dict_keys_for_model(state_dict: dict, model_keys) -> dict:
+    """按模型 key 兼容性对 checkpoint key 做最小规范化.
+
+    目前处理：
+    - `module.` 前缀（DDP 保存）
+    - `._orig_mod.` / `_orig_mod.`（torch.compile 包装）
+    """
+    if not state_dict:
+        return state_dict
+
+    keys = list(state_dict.keys())
+
+    # 先统一去除最外层 DDP 前缀
+    if keys and keys[0].startswith("module."):
+        state_dict = {k[7:]: v for k, v in state_dict.items()}
+
+    model_key_set = set(model_keys)
+
+    def _strip_orig_mod(name: str) -> str:
+        parts = [p for p in name.split(".") if p != "_orig_mod"]
+        return ".".join(parts)
+
+    # 若去除 _orig_mod 后与模型 key 重合更多，则采用规范化后的 keys
+    current_overlap = sum(1 for k in state_dict.keys() if k in model_key_set)
+    stripped_state = {_strip_orig_mod(k): v for k, v in state_dict.items()}
+    stripped_overlap = sum(1 for k in stripped_state.keys() if k in model_key_set)
+
+    if stripped_overlap > current_overlap:
+        logger.info(
+            "检测到 checkpoint 包含 _orig_mod 包装前缀，已自动规范化键名 "
+            f"(匹配键 {current_overlap} -> {stripped_overlap})"
+        )
+        state_dict = stripped_state
+
+    return state_dict
+
 def _load_checkpoint_raw(filename: str, map_location=None):
     """从文件 / URL 加载 checkpoint."""
     if filename.startswith(("http://", "https://")):
@@ -56,10 +93,10 @@ def load_checkpoint(model: nn.Module, filename: str, map_location=None,
     else:
         raise RuntimeError(f"不支持的 checkpoint 类型: {type(ckpt)}")
 
-    # 去除 'module.' 前缀
-    keys = list(state_dict.keys())
-    if keys and keys[0].startswith("module."):
-        state_dict = {k[7:]: v for k, v in state_dict.items()}
+    state_dict = _normalize_state_dict_keys_for_model(
+        state_dict,
+        model.state_dict().keys(),
+    )
 
     load_state_dict(model, state_dict, strict=strict, logger=logger)
     return ckpt

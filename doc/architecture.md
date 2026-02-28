@@ -32,12 +32,16 @@ src/flashocc/
 │   │   └── points.py     # BasePoints, LiDARPoints, get_points_type
 │   └── ops/              # 自定义算子
 │       ├── _ext.py       # JIT CUDA 扩展加载
-│       └── bev_pool_v2.py# BEV 池化 CUDA 内核
+│       ├── bev_pool_v2.py# BEV 池化 v2 CUDA 内核
+│       ├── bev_pool_v3.py# BEV 池化 v3 CUDA 内核 (高性能)
+│       ├── bev_pool_v3_triton.py  # BEV 池化 v3 Triton 后端
+│       └── voxel_pooling_prepare_v3.py  # 融合 voxel prepare
 ├── datasets/             # 数据加载与评估
 │   ├── base_dataset.py   # Custom3DDataset 抽象基类
 │   ├── builder.py        # DATASETS / PIPELINES 注册表, build_dataset
 │   ├── nuscenes_bevdet.py# NuScenesDatasetBEVDet (检测评估格式)
 │   ├── nuscenes_occ.py   # NuScenesOccDataset (占用评估, mIoU/RayIoU)
+│   ├── dali_decode.py    # DALI GPU 图像解码
 │   ├── pipelines/        # 数据变换管线
 │   │   ├── base.py       # LoadMultiViewImageFromFiles, GlobalRotScaleTrans 等
 │   │   ├── loading.py    # BEVDet 专用加载 (PrepareImageInputs, LoadOccGTFromFile)
@@ -50,10 +54,10 @@ src/flashocc/
 │       └── ray_pq.py     # RayPanopticMetric
 ├── engine/               # 训练 / 测试引擎
 │   ├── trainer.py        # train_model, build_dataloader
-│   ├── tester.py         # test_model
-│   ├── inference.py      # single_gpu_test
+│   ├── tester.py         # single_gpu_test
+│   ├── inference.py      # init_model
 │   ├── seed.py           # init_random_seed, set_random_seed
-│   ├── parallel.py       # MMDataParallel / MMDistributedDataParallel
+│   ├── parallel.py       # DataContainer / DataParallel
 │   └── hooks/            # 训练钩子
 │       ├── ema.py        # MEGVIIEMAHook
 │       ├── sequential_control.py  # SequentialControlHook
@@ -80,14 +84,14 @@ src/flashocc/
 experiment = Experiment(
     model=Lazy(BEVDetOCC,
         img_backbone=Lazy(ResNet, depth=50, ...),
-        img_neck=Lazy(FPN, in_channels=[512, 1024, 2048], ...),
+        img_neck=Lazy(CustomFPN, ...),
         ...
     ),
-    data=DataConfig(
-        samples_per_gpu=4,
-        workers_per_gpu=4,
-        ...
-    ),
+    train_data=Lazy(NuScenesDatasetOccpancy, ...),
+    val_data=Lazy(NuScenesDatasetOccpancy, ...),
+    samples_per_gpu=8,
+    workers_per_gpu=16,
+    ...
 )
 ```
 

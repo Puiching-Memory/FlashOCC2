@@ -5,6 +5,9 @@
   2. torch.sort (内部使用 CUB DeviceRadixSort)
   3. 一个 CUDA kernel: 区间检测 (或等价的 PyTorch fallback)
 
+v3 优化:
+  4. 同时计算 feat-sorted intervals → backward 零 argsort 开销
+
 同时提供纯 PyTorch fallback (voxel_pooling_prepare_v3_pytorch).
 """
 
@@ -12,27 +15,31 @@ from __future__ import annotations
 
 import torch
 
-try:
-    from flashocc.core.ops._ext import bev_pool_v3_ext
-    _HAS_V3_CUDA = True
-except ImportError:
-    _HAS_V3_CUDA = False
+from flashocc.core.ops._ext import bev_pool_v3_ext
 
 __all__ = ["voxel_pooling_prepare_v3", "voxel_pooling_prepare_v3_pytorch"]
 
 
 # =====================================================================
-#                  FUSED CUDA IMPLEMENTATION
+#                  Helper: compute intervals from sorted keys
 # =====================================================================
 
-def _compute_intervals_cuda(sorted_keys: torch.Tensor):
-    """Use CUDA kernel to detect interval starts, then diff for lengths."""
+def _compute_intervals_from_sorted(sorted_keys):
+    """Given a sorted int tensor, compute interval starts and lengths."""
     n = sorted_keys.shape[0]
-    flags = torch.empty(n, dtype=torch.int32, device=sorted_keys.device)
-    bev_pool_v3_ext.compute_intervals_v3(sorted_keys.int().contiguous(), flags)
-    torch.cuda.current_stream().synchronize()
+    if n == 0:
+        return None, None
 
-    starts = torch.where(flags == 1)[0].int()
+    if bev_pool_v3_ext is not None:
+        flags = torch.empty(n, dtype=torch.int32, device=sorted_keys.device)
+        bev_pool_v3_ext.compute_intervals_v3(sorted_keys.int().contiguous(), flags)
+        torch.cuda.current_stream().synchronize()
+        starts = torch.where(flags == 1)[0].int()
+    else:
+        kept = torch.ones(n, device=sorted_keys.device, dtype=torch.bool)
+        kept[1:] = sorted_keys[1:] != sorted_keys[:-1]
+        starts = torch.where(kept)[0].int()
+
     if starts.numel() == 0:
         return None, None
     lengths = torch.zeros_like(starts)
@@ -41,8 +48,37 @@ def _compute_intervals_cuda(sorted_keys: torch.Tensor):
     return starts.contiguous(), lengths.contiguous()
 
 
+def _compute_feat_intervals(ranks_feat, ranks_depth, ranks_bev):
+    """Sort by ranks_feat and compute feat-grouping intervals for backward.
+
+    Returns:
+        (rd_fs, rf_fs, rb_fs, starts_fs, lengths_fs) — all contiguous int32
+    """
+    order = ranks_feat.long().argsort()
+    rf = ranks_feat[order]
+    rd = ranks_depth[order]
+    rb = ranks_bev[order]
+
+    starts, lengths = _compute_intervals_from_sorted(rf)
+    if starts is None:
+        return None
+    return (rd.int().contiguous(), rf.int().contiguous(), rb.int().contiguous(),
+            starts.int().contiguous(), lengths.int().contiguous())
+
+
+# =====================================================================
+#                  FUSED CUDA IMPLEMENTATION
+# =====================================================================
+
+def _compute_intervals_cuda(sorted_keys: torch.Tensor):
+    """Use CUDA kernel to detect interval starts, then diff for lengths."""
+    return _compute_intervals_from_sorted(sorted_keys)
+
+
 def voxel_pooling_prepare_v3(coor, grid_lower_bound, grid_interval, grid_size):
     """Fused voxel pooling prepare using CUDA kernels.
+
+    Also pre-computes feat-sorted intervals for backward (eliminates argsort).
 
     Args:
         coor: (B, N, D, H, W, 3) float — 世界坐标 (ego 坐标系)
@@ -56,11 +92,8 @@ def voxel_pooling_prepare_v3(coor, grid_lower_bound, grid_interval, grid_size):
         ranks_feat:       (N_points,) int  — feat 平坦索引
         interval_starts:  (N_intervals,) int
         interval_lengths: (N_intervals,) int
+        feat_intervals:   tuple(rd_fs, rf_fs, rb_fs, starts_fs, lengths_fs) or None
     """
-    if not _HAS_V3_CUDA:
-        return voxel_pooling_prepare_v3_pytorch(coor, grid_lower_bound,
-                                                 grid_interval, grid_size)
-
     B, N, D, H, W, _ = coor.shape
     num_points = B * N * D * H * W
     device = coor.device
@@ -89,7 +122,7 @@ def voxel_pooling_prepare_v3(coor, grid_lower_bound, grid_interval, grid_size):
         B, N, D, H, W)
 
     if n_valid == 0:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     # Trim to valid points
     ranks_bev   = ranks_bev[:n_valid].contiguous()
@@ -102,16 +135,20 @@ def voxel_pooling_prepare_v3(coor, grid_lower_bound, grid_interval, grid_size):
     ranks_depth = ranks_depth[order]
     ranks_feat  = ranks_feat[order]
 
-    # Compute intervals (CUDA kernel for flag detection)
+    # Compute bev intervals (CUDA kernel for flag detection)
     starts, lengths = _compute_intervals_cuda(ranks_bev)
     if starts is None:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
+
+    # Pre-compute feat intervals for backward (eliminates argsort in backward!)
+    feat_intervals = _compute_feat_intervals(ranks_feat, ranks_depth, ranks_bev)
 
     return (ranks_bev.int().contiguous(),
             ranks_depth.int().contiguous(),
             ranks_feat.int().contiguous(),
             starts.int().contiguous(),
-            lengths.int().contiguous())
+            lengths.int().contiguous(),
+            feat_intervals)
 
 
 # =====================================================================
@@ -121,6 +158,8 @@ def voxel_pooling_prepare_v3(coor, grid_lower_bound, grid_interval, grid_size):
 def voxel_pooling_prepare_v3_pytorch(coor, grid_lower_bound, grid_interval, grid_size):
     """Pure PyTorch implementation (identical to v2 logic, for reference/fallback).
 
+    Also computes feat-sorted intervals for backward.
+
     Args:
         coor: (B, N, D, H, W, 3) float
         grid_lower_bound: (3,) float tensor
@@ -128,7 +167,7 @@ def voxel_pooling_prepare_v3_pytorch(coor, grid_lower_bound, grid_interval, grid
         grid_size: (3,) float tensor
 
     Returns:
-        (ranks_bev, ranks_depth, ranks_feat, interval_starts, interval_lengths)
+        (ranks_bev, ranks_depth, ranks_feat, interval_starts, interval_lengths, feat_intervals)
     """
     B, N, D, H, W, _ = coor.shape
     num_points = B * N * D * H * W
@@ -150,7 +189,7 @@ def voxel_pooling_prepare_v3_pytorch(coor, grid_lower_bound, grid_interval, grid
             (coor[:, 1] >= 0) & (coor[:, 1] < grid_size[1]) &
             (coor[:, 2] >= 0) & (coor[:, 2] < grid_size[2]))
     if kept.sum() == 0:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     coor, ranks_depth, ranks_feat = coor[kept], ranks_depth[kept], ranks_feat[kept]
 
@@ -167,13 +206,17 @@ def voxel_pooling_prepare_v3_pytorch(coor, grid_lower_bound, grid_interval, grid
     kept[1:] = ranks_bev[1:] != ranks_bev[:-1]
     interval_starts = torch.where(kept)[0].int()
     if interval_starts.numel() == 0:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     interval_lengths = torch.zeros_like(interval_starts)
     interval_lengths[:-1] = interval_starts[1:] - interval_starts[:-1]
     interval_lengths[-1] = ranks_bev.shape[0] - interval_starts[-1]
+
+    # Pre-compute feat intervals for backward
+    feat_intervals = _compute_feat_intervals(ranks_feat, ranks_depth, ranks_bev)
 
     return (ranks_bev.int().contiguous(),
             ranks_depth.int().contiguous(),
             ranks_feat.int().contiguous(),
             interval_starts.int().contiguous(),
-            interval_lengths.int().contiguous())
+            interval_lengths.int().contiguous(),
+            feat_intervals)

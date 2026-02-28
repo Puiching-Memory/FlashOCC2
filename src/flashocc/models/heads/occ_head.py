@@ -4,11 +4,11 @@ from torch import nn
 from flashocc.core.nn import ConvModule
 from flashocc.core import BaseModule
 import numpy as np
-from flashocc.models import HEADS, build_loss
+from flashocc.models import HEADS
 from flashocc.constants import NUSC_CLASS_FREQUENCIES
 
 
-@HEADS.register_module()
+@HEADS.register
 class BEVOCCHead2D(BaseModule):
     def __init__(self,
                  in_dim=256,
@@ -49,8 +49,9 @@ class BEVOCCHead2D(BaseModule):
         if self.class_balance:
             class_weights = torch.from_numpy(1 / np.log(NUSC_CLASS_FREQUENCIES[:num_classes] + 0.001))
             self.cls_weights = class_weights
-            loss_occ['class_weight'] = class_weights
-        self.loss_occ = build_loss(loss_occ)
+            if hasattr(loss_occ, 'class_weight'):
+                loss_occ.class_weight = class_weights
+        self.loss_occ = loss_occ
 
     def forward(self, img_feats):
         """

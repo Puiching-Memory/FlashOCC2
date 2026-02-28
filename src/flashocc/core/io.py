@@ -64,8 +64,4 @@ def dump(obj, file: str | None = None, file_format: str | None = None, **kwargs)
             return pickle.dumps(obj, **kwargs)
 
 
-def track_iter_progress(task, **kwargs):
-    """tqdm 进度条封装."""
-    from flashocc.core.log import progress_bar
-    total = len(task) if hasattr(task, "__len__") else None
-    return progress_bar(task, total=total, **kwargs)
+

@@ -15,6 +15,7 @@ from plum import dispatch
 from flashocc.core import get_dist_info
 from flashocc.core.log import logger
 from flashocc.engine.parallel import DataContainer
+from flashocc.datasets.dali_decode import dali_decode_batch
 
 
 # =====================================================================
@@ -276,17 +277,28 @@ def train_model(experiment, model, distributed=False, validate=False,
     if getattr(exp, 'use_compile', False):
         compile_backend = getattr(exp, 'compile_backend', 'inductor')
         compile_mode = getattr(exp, 'compile_mode', 'reduce-overhead')
+        
+        # 方案 A: 只编译纯 Tensor 计算的子模块，而不是整个模型
+        # 这样可以避免 img_metas 等包含动态字符串的参数导致反复重新编译
         _model_to_compile = model.module if hasattr(model, 'module') else model
-        _model_to_compile = torch.compile(
-            _model_to_compile,
-            backend=compile_backend,
-            mode=compile_mode,
-        )
-        if hasattr(model, 'module'):
-            model.module = _model_to_compile
-        else:
-            model = _model_to_compile
-        logger.info(f"启用 torch.compile, backend={compile_backend}, mode={compile_mode}")
+        
+        if hasattr(_model_to_compile, 'img_backbone') and _model_to_compile.img_backbone is not None:
+            _model_to_compile.img_backbone = torch.compile(
+                _model_to_compile.img_backbone, backend=compile_backend, mode=compile_mode)
+        if hasattr(_model_to_compile, 'img_neck') and _model_to_compile.img_neck is not None:
+            _model_to_compile.img_neck = torch.compile(
+                _model_to_compile.img_neck, backend=compile_backend, mode=compile_mode)
+        if hasattr(_model_to_compile, 'img_bev_encoder_backbone') and _model_to_compile.img_bev_encoder_backbone is not None:
+            _model_to_compile.img_bev_encoder_backbone = torch.compile(
+                _model_to_compile.img_bev_encoder_backbone, backend=compile_backend, mode=compile_mode)
+        if hasattr(_model_to_compile, 'img_bev_encoder_neck') and _model_to_compile.img_bev_encoder_neck is not None:
+            _model_to_compile.img_bev_encoder_neck = torch.compile(
+                _model_to_compile.img_bev_encoder_neck, backend=compile_backend, mode=compile_mode)
+        if hasattr(_model_to_compile, 'pts_bbox_head') and _model_to_compile.pts_bbox_head is not None:
+            _model_to_compile.pts_bbox_head = torch.compile(
+                _model_to_compile.pts_bbox_head, backend=compile_backend, mode=compile_mode)
+                
+        logger.info(f"启用 torch.compile (子模块编译), backend={compile_backend}, mode={compile_mode}")
 
     # ---- 训练参数 ----
     max_epochs = exp.max_epochs
@@ -323,6 +335,10 @@ def train_model(experiment, model, distributed=False, validate=False,
                 data_batch,
                 non_blocking=exp.dataloader_non_blocking,
             )
+
+            # ---- DALI GPU 图像解码 ----
+            if 'jpeg_bytes' in data_batch:
+                data_batch = dali_decode_batch(data_batch)
 
             # ---- channels_last for input images ----
             if getattr(exp, 'use_channels_last', False):
@@ -375,16 +391,21 @@ def train_model(experiment, model, distributed=False, validate=False,
         if lr_scheduler is not None:
             lr_scheduler.step()
 
-        # 保存 checkpoint
-        ckpt_path = os.path.join(work_dir, f"epoch_{epoch+1}.pth")
-        raw_model = model.module if hasattr(model, "module") else model
-        state = {
-            "meta": {"epoch": epoch + 1, **(meta or {})},
-            "state_dict": raw_model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-        }
-        torch.save(state, ckpt_path)
-        logger.info(f"已保存 checkpoint: {ckpt_path}")
+        # 保存 checkpoint（仅主进程写盘，避免多 rank 竞争同一文件）
+        if is_main_process:
+            ckpt_path = os.path.join(work_dir, f"epoch_{epoch+1}.pth")
+            raw_model = model.module if hasattr(model, "module") else model
+            state = {
+                "meta": {"epoch": epoch + 1, **(meta or {})},
+                "state_dict": raw_model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+            }
+            torch.save(state, ckpt_path)
+            logger.info(f"已保存 checkpoint: {ckpt_path}")
+
+        # epoch 级同步，防止 rank 间进度漂移
+        if distributed and dist.is_available() and dist.is_initialized():
+            dist.barrier()
 
     logger.info("训练完成。")
 

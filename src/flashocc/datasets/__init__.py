@@ -2,7 +2,7 @@
 
 from .builder import DATASETS, PIPELINES  # noqa
 
-# 导入子模块以触发 @register_module() 装饰器
+# 导入子模块以触发 @register 装饰器
 from . import nuscenes_bevdet  # noqa
 from . import nuscenes_occ  # noqa
 from . import pipelines  # noqa

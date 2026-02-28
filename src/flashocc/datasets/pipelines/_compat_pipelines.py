@@ -4,7 +4,7 @@ import numpy as np
 from ..builder import PIPELINES
 
 
-@PIPELINES.register_module()
+@PIPELINES.register
 class LoadPointsFromFile:
     """Load 3D points from file.
 
@@ -52,7 +52,7 @@ class LoadPointsFromFile:
                 f'load_dim={self.load_dim}, use_dim={self.use_dim})')
 
 
-@PIPELINES.register_module()
+@PIPELINES.register
 class MultiScaleFlipAug3D:
     """Test-time augmentation wrapper (simplified — no multi-scale / no flip).
 

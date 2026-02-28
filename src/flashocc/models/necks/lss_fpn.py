@@ -9,7 +9,7 @@ from flashocc.core import BaseModule
 from flashocc.models import NECKS
 
 
-@NECKS.register_module()
+@NECKS.register
 class FPN_LSS(BaseModule):
     def __init__(self,
                  in_channels,
@@ -76,7 +76,7 @@ class FPN_LSS(BaseModule):
         return x
 
 
-@NECKS.register_module()
+@NECKS.register
 class LSSFPN3D(nn.Module):
     def __init__(self,
                  in_channels,

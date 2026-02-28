@@ -19,7 +19,7 @@ class SequentialControlConfig(BaseModel):
         return v
 
 
-@HOOKS.register_module()
+@HOOKS.register
 class SequentialControlHook(Hook):
     """ """
 

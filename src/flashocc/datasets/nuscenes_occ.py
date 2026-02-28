@@ -96,7 +96,7 @@ colors_map = np.array(
     ])
 
 
-@DATASETS.register_module()
+@DATASETS.register
 class NuScenesDatasetOccpancy(NuScenesDataset):
     def get_data_info(self, index):
         """Get data info according to the given index.

@@ -8,7 +8,7 @@ from flashocc.datasets.pipelines.base import to_tensor
 from flashocc.datasets.builder import PIPELINES
 
 
-@PIPELINES.register_module(force=True)
+@PIPELINES.register(force=True)
 class DefaultFormatBundle(object):
     """Default formatting bundle.
 
@@ -80,7 +80,7 @@ class DefaultFormatBundle(object):
         return self.__class__.__name__
 
 
-@PIPELINES.register_module(force=True)
+@PIPELINES.register(force=True)
 class Collect3D(object):
     """Collect data from the loader relevant to the specific task.
 
@@ -171,7 +171,7 @@ class Collect3D(object):
             f'(keys={self.keys}, meta_keys={self.meta_keys})'
 
 
-@PIPELINES.register_module(force=True)
+@PIPELINES.register(force=True)
 class DefaultFormatBundle3D(DefaultFormatBundle):
     """Default formatting bundle.
 

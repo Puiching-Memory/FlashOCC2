@@ -1,12 +1,20 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
-from flashocc.core import BaseModule, force_fp32
+from flashocc.core import BaseModule
 from flashocc.models import NECKS
 from flashocc.core.ops import bev_pool_v2
 
+# v3 imports — graceful fallback to v2
+try:
+    from flashocc.core.ops import bev_pool_v3, bev_pool_v3_triton
+    from flashocc.core.ops import voxel_pooling_prepare_v3
+    _HAS_V3 = True
+except ImportError:
+    _HAS_V3 = False
 
-@NECKS.register_module(force=True)
+
+@NECKS.register(force=True)
 class LSSViewTransformer(BaseModule):
     r"""Lift-Splat-Shoot view transformer with BEVPoolv2 implementation.
 
@@ -57,6 +65,7 @@ class LSSViewTransformer(BaseModule):
         self.accelerate = accelerate
         self.initial_flag = True
         self.collapse_z = collapse_z
+        self.pool_version = 'v3' if _HAS_V3 else 'v2'   # 'v2' | 'v3' | 'v3_triton'
 
     def create_grid_infos(self, grid_config):
         """Generate the grid information including the lower bound, interval,
@@ -203,10 +212,15 @@ class LSSViewTransformer(BaseModule):
             x (torch.tensor): Feature of points in shape
                 (B, N_cams, D, H, W, C).
         """
-
-        ranks_bev, ranks_depth, ranks_feat, \
-            interval_starts, interval_lengths = \
-            self.voxel_pooling_prepare_v2(coor)
+        if self.pool_version.startswith('v3') and _HAS_V3:
+            ranks_bev, ranks_depth, ranks_feat, \
+                interval_starts, interval_lengths = \
+                voxel_pooling_prepare_v3(
+                    coor, self.grid_lower_bound, self.grid_interval, self.grid_size)
+        else:
+            ranks_bev, ranks_depth, ranks_feat, \
+                interval_starts, interval_lengths = \
+                self.voxel_pooling_prepare_v2(coor)
         # ranks_bev: (N_points, ),
         # ranks_depth: (N_points, ),
         # ranks_feat: (N_points, ),
@@ -219,6 +233,15 @@ class LSSViewTransformer(BaseModule):
         self.interval_starts = interval_starts.int().contiguous()
         self.interval_lengths = interval_lengths.int().contiguous()
 
+    def _select_pool_fn(self):
+        """Return the appropriate pool function based on pool_version."""
+        if self.pool_version == 'v3' and _HAS_V3:
+            return bev_pool_v3
+        elif self.pool_version == 'v3_triton' and _HAS_V3:
+            return bev_pool_v3_triton
+        return bev_pool_v2
+
+    @torch.compiler.disable
     def voxel_pooling_v2(self, coor, depth, feat):
         """
         Args:
@@ -228,9 +251,15 @@ class LSSViewTransformer(BaseModule):
         Returns:
             bev_feat: (B, C*Dz(=1), Dy, Dx)
         """
-        ranks_bev, ranks_depth, ranks_feat, \
-            interval_starts, interval_lengths = \
-            self.voxel_pooling_prepare_v2(coor)
+        if self.pool_version.startswith('v3') and _HAS_V3:
+            ranks_bev, ranks_depth, ranks_feat, \
+                interval_starts, interval_lengths = \
+                voxel_pooling_prepare_v3(
+                    coor, self.grid_lower_bound, self.grid_interval, self.grid_size)
+        else:
+            ranks_bev, ranks_depth, ranks_feat, \
+                interval_starts, interval_lengths = \
+                self.voxel_pooling_prepare_v2(coor)
         # ranks_bev: (N_points, ),
         # ranks_depth: (N_points, ),
         # ranks_feat: (N_points, ),
@@ -252,7 +281,8 @@ class LSSViewTransformer(BaseModule):
         bev_feat_shape = (depth.shape[0], int(self.grid_size[2]),
                           int(self.grid_size[1]), int(self.grid_size[0]),
                           feat.shape[-1])       # (B, Dz, Dy, Dx, C)
-        bev_feat = bev_pool_v2(depth, feat, ranks_depth, ranks_feat, ranks_bev,
+        pool_fn = self._select_pool_fn()
+        bev_feat = pool_fn(depth, feat, ranks_depth, ranks_feat, ranks_bev,
                                bev_feat_shape, interval_starts,
                                interval_lengths)    # (B, C, Dz, Dy, Dx)
         # collapse Z
@@ -260,6 +290,7 @@ class LSSViewTransformer(BaseModule):
             bev_feat = torch.cat(bev_feat.unbind(dim=2), 1)     # (B, C*Dz, Dy, Dx)
         return bev_feat
 
+    @torch.compiler.disable
     def voxel_pooling_prepare_v2(self, coor):
         """Data preparation for voxel pooling.
         Args:
@@ -336,6 +367,7 @@ class LSSViewTransformer(BaseModule):
             self.init_acceleration_v2(coor)
             self.initial_flag = False
 
+    @torch.compiler.disable
     def view_transform_core(self, input, depth, tran_feat):
         """
         Args:
@@ -363,7 +395,8 @@ class LSSViewTransformer(BaseModule):
             bev_feat_shape = (depth.shape[0], int(self.grid_size[2]),
                               int(self.grid_size[1]), int(self.grid_size[0]),
                               feat.shape[-1])   # (B, Dz, Dy, Dx, C)
-            bev_feat = bev_pool_v2(depth, feat, self.ranks_depth,
+            pool_fn = self._select_pool_fn()
+            bev_feat = pool_fn(depth, feat, self.ranks_depth,
                                    self.ranks_feat, self.ranks_bev,
                                    bev_feat_shape, self.interval_starts,
                                    self.interval_lengths)   # (B, C, Dz, Dy, Dx)

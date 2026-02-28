@@ -9,7 +9,7 @@ from flashocc.models.backbones._resnet_base import BasicBlock, Bottleneck
 from flashocc.models import BACKBONES
 
 
-@BACKBONES.register_module()
+@BACKBONES.register
 class CustomResNet(BaseModule):
     def __init__(
             self,
@@ -121,7 +121,7 @@ class BasicBlock3D(nn.Module):
         return self.relu(x)
 
 
-@BACKBONES.register_module()
+@BACKBONES.register
 class CustomResNet3D(nn.Module):
     def __init__(
             self,

@@ -85,7 +85,7 @@ model = Lazy(BEVDetOCC,
         norm_eval=False,
         with_cp=True,
         style="pytorch",
-        pretrained=True,
+        pretrained="ckpts/img_backbone.pth",
     ),
     img_neck=Lazy(CustomFPN,
         in_channels=[1024, 2048],
@@ -148,7 +148,8 @@ train_pipeline = [
     Lazy(DefaultFormatBundle3D, class_names=class_names),
     Lazy(Collect3D,
          keys=["img_inputs", "gt_depth", "voxel_semantics",
-               "mask_lidar", "mask_camera"]),
+               "mask_lidar", "mask_camera",
+               "jpeg_bytes", "img_aug_params"]),
 ]
 
 test_pipeline = [
@@ -163,7 +164,8 @@ test_pipeline = [
          transforms=[
              Lazy(DefaultFormatBundle3D,
                   class_names=class_names, with_label=False),
-             Lazy(Collect3D, keys=["points", "img_inputs"]),
+             Lazy(Collect3D, keys=["points", "img_inputs",
+                                   "jpeg_bytes", "img_aug_params"]),
          ]),
 ]
 
@@ -207,12 +209,12 @@ experiment = Experiment(
     train_data=train_data,
     val_data=val_data,
 
-    samples_per_gpu=4,
-    workers_per_gpu=4,
+    samples_per_gpu=8,
+    workers_per_gpu=16,
     dataloader_pin_memory=True,
     dataloader_persistent_workers=True,
-    dataloader_prefetch_factor=2,
-    dataloader_drop_last=False,
+    dataloader_prefetch_factor=4,
+    dataloader_drop_last=True,       # DDP + torch.compile(reduce-overhead) 必须 True，否则最后一个 batch 形状不同会触发 CUDA Graph 重录导致死锁
     dataloader_non_blocking=True,
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
@@ -222,7 +224,7 @@ experiment = Experiment(
     grad_max_norm=5.0,
 
     max_epochs=24,
-    # load_from="ckpts/bevdet-r50-cbgs.pth",
+    # load_from="ckpts/bevdet-r50-cbgs.pth", # 在此处的权重会覆盖所有其他权重
 
     checkpoint_interval=1,
     max_keep_ckpts=5,
@@ -240,7 +242,7 @@ experiment = Experiment(
     use_amp=True,                     # BF16 混合精度 — conv/BN 加速 ~2-3x
     amp_dtype="bfloat16",             # H800 原生支持 BF16
     use_channels_last=True,           # 消除 NCHW ↔ NHWC 转换开销 (~250ms/iter)
-    use_compile=False,                # torch.compile (可选, 首次编译较慢)
+    use_compile=True,                # torch.compile (可选, 首次编译较慢)
     compile_backend="inductor",
     compile_mode="reduce-overhead",
 )

@@ -2,19 +2,19 @@
 import tempfile
 from os import path as osp
 
-import flashocc
 import numpy as np
 import pyquaternion
 from nuscenes.utils.data_classes import Box as NuScenesBox
 
 from flashocc.core.bbox.bbox import LiDARInstance3DBoxes
-from flashocc.core.log import logger as _logger
+from flashocc.core.io import load, dump, mkdir_or_exist
+from flashocc.core.log import logger as _logger, progress_bar
 from flashocc.datasets import DATASETS
 from flashocc.datasets.base_dataset import Custom3DDataset
 from flashocc.datasets.pipelines import Compose
 
 
-@DATASETS.register_module()
+@DATASETS.register
 class NuScenesDatasetBEVDet(Custom3DDataset):
     r"""NuScenes Dataset.
 
@@ -203,7 +203,7 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
         Returns:
             list[dict]: List of annotations sorted by timestamps.
         """
-        data = flashocc.load(ann_file, file_format='pkl')
+        data = load(ann_file, file_format='pkl')
         data_infos = list(sorted(data['infos'], key=lambda e: e['timestamp']))
         data_infos = data_infos[::self.load_interval]
         self.metadata = data['metadata']
@@ -360,7 +360,7 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
         mapped_class_names = self.CLASSES
 
         _logger.info('Start to convert detection format...')
-        for sample_id, det in enumerate(flashocc.track_iter_progress(results)):
+        for sample_id, det in enumerate(progress_bar(results, desc='Converting')):
             boxes = det['boxes_3d'].tensor.numpy()
             scores = det['scores_3d'].numpy()
             labels = det['labels_3d'].numpy()
@@ -425,10 +425,10 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
             'results': nusc_annos,
         }
 
-        flashocc.mkdir_or_exist(jsonfile_prefix)
+        mkdir_or_exist(jsonfile_prefix)
         res_path = osp.join(jsonfile_prefix, 'results_nusc.json')
         _logger.info(f'Results writes to {res_path}')
-        flashocc.dump(nusc_submissions, res_path)
+        dump(nusc_submissions, res_path)
         return res_path
 
     def _evaluate_single(self,
@@ -470,7 +470,7 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
         nusc_eval.main(render_curves=False)
 
         # record metrics
-        metrics = flashocc.load(osp.join(output_dir, 'metrics_summary.json'))
+        metrics = load(osp.join(output_dir, 'metrics_summary.json'))
         detail = dict()
         metric_prefix = f'{result_name}_NuScenes'
         for name in self.CLASSES:

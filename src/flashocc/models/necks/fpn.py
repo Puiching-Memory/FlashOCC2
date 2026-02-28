@@ -7,7 +7,7 @@ from flashocc.core import BaseModule
 from flashocc.models import NECKS
 
 
-@NECKS.register_module()
+@NECKS.register
 class CustomFPN(BaseModule):
     r"""Feature Pyramid Network.
 

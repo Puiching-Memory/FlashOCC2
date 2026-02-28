@@ -3,3 +3,4 @@ ckpts/
 work_dirs/
 __pycache__/
 data/
+vis_output/

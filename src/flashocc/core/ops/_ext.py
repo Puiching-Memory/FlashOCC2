@@ -51,4 +51,19 @@ except ImportError:
     )
 
 
-__all__ = ["bev_pool_v2_ext"]
+# ---- BEV Pool v3 ----
+try:
+    import bev_pool_v3_ext  # type: ignore
+except ImportError:
+    _bev_pool_v3_src = os.path.join(_CSRC_DIR, "bev_pool_v3")
+    bev_pool_v3_ext = _try_load_ext(
+        "bev_pool_v3_ext",
+        sources=[
+            os.path.join(_bev_pool_v3_src, "bev_pool_v3.cpp"),
+            os.path.join(_bev_pool_v3_src, "bev_pool_v3_cuda.cu"),
+        ],
+        extra_cuda_cflags=["-O3", "--use_fast_math", "-lineinfo"],
+    )
+
+
+__all__ = ["bev_pool_v2_ext", "bev_pool_v3_ext"]

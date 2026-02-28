@@ -62,7 +62,7 @@ _TIMM_MAP = {
 }
 
 
-@BACKBONES.register_module()
+@BACKBONES.register
 class ResNet(nn.Module):
     """ResNet backbone (timm wrapper).
 

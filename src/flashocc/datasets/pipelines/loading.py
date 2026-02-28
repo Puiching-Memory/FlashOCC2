@@ -1,10 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import os
 
-import flashocc
 import numpy as np
 import torch
-from PIL import Image
 from pyquaternion import Quaternion
 
 from flashocc.core.bbox.points import BasePoints, get_points_type
@@ -12,29 +10,17 @@ from flashocc.datasets.pipelines.base import LoadAnnotations, LoadImageFromFile
 from flashocc.core.bbox.bbox import LiDARInstance3DBoxes
 from flashocc.datasets.builder import PIPELINES
 from flashocc.constants import IMAGENET_MEAN, IMAGENET_STD
-from torchvision.transforms.functional import rotate
+from flashocc.engine.parallel import DataContainer as DC
 
 
-def _imnormalize(img, mean, std, to_rgb=True):
-    """归一化图像."""
-    img = img.copy().astype(np.float32)
-    mean = np.float64(mean.reshape(1, -1))
-    stdinv = 1 / np.float64(std.reshape(1, -1))
-    if to_rgb:
-        img = img[:, :, ::-1]  # BGR -> RGB
-    img -= mean
-    img *= stdinv
-    return img
-
-
-def mmlabNormalize(img):
-    img = _imnormalize(np.array(img), IMAGENET_MEAN, IMAGENET_STD, to_rgb=True)
-    img = torch.tensor(np.ascontiguousarray(img)).float().permute(2, 0, 1).contiguous()
-    return img
-
-
-@PIPELINES.register_module()
+@PIPELINES.register
 class PrepareImageInputs(object):
+    """准备多视角图像输入 — DALI GPU 解码版.
+
+    Workers 只读取 JPEG 原始字节 + 计算增广参数/矩阵 (CPU),
+    实际图像解码和变换延迟到 trainer 主线程的 GPU 上批量执行.
+    """
+
     def __init__(
             self,
             data_config,
@@ -43,7 +29,6 @@ class PrepareImageInputs(object):
     ):
         self.is_train = is_train
         self.data_config = data_config
-        self.normalize_img = mmlabNormalize
         self.sequential = sequential
 
     def choose_cams(self):
@@ -103,12 +88,7 @@ class PrepareImageInputs(object):
         return resize, resize_dims, crop, flip, rotate
 
     def img_transform_core(self, img, resize_dims, crop, flip, rotate):
-        # adjust image
-        img = img.resize(resize_dims)
-        img = img.crop(crop)
-        if flip:
-            img = img.transpose(method=Image.FLIP_LEFT_RIGHT)
-        img = img.rotate(rotate)
+        # DALI 版: 不做实际变换, 仅返回原图 (变换延迟到 GPU)
         return img
 
     def get_rot(self, h):
@@ -117,11 +97,11 @@ class PrepareImageInputs(object):
             [-np.sin(h), np.cos(h)],
         ])
 
-    def img_transform(self, img, post_rot, post_tran, resize, resize_dims,
+    def img_transform(self, post_rot, post_tran, resize, resize_dims,
                       crop, flip, rotate):
-        """
+        """计算图像增广对应的 post_rot / post_tran 矩阵 (纯数学, 不操作图像).
+
         Args:
-            img: PIL.Image
             post_rot: torch.eye(2)
             post_tran: torch.eye(2)
             resize: float, resize的比例.
@@ -130,13 +110,9 @@ class PrepareImageInputs(object):
             flip: bool
             rotate: float 旋转角度
         Returns:
-            img: PIL.Image
             post_rot: Tensor (2, 2)
             post_tran: Tensor (2, )
         """
-        # adjust image
-        img = self.img_transform_core(img, resize_dims, crop, flip, rotate)
-
         # post-homography transformation
         # 将上述变换以矩阵表示.
         post_rot *= resize
@@ -152,7 +128,7 @@ class PrepareImageInputs(object):
         post_rot = A.matmul(post_rot)
         post_tran = A.matmul(post_tran) + b
 
-        return img, post_rot, post_tran
+        return post_rot, post_tran
 
     def get_sensor_transforms(self, info, cam_name):
         """
@@ -187,21 +163,15 @@ class PrepareImageInputs(object):
         return sensor2ego, ego2global
 
     def get_inputs(self, results, flip=None, scale=None):
-        """
-        Args:
-            results:
-            flip:
-            scale:
+        """读取 JPEG 字节 + 计算增广矩阵 (CPU 端, 不做图像解码).
 
-        Returns:
-            imgs:  (N_views, 3, H, W)        # N_views = 6 * (N_history + 1)
-            sensor2egos: (N_views, 4, 4)
-            ego2globals: (N_views, 4, 4)
-            intrins:     (N_views, 3, 3)
-            post_rots:   (N_views, 3, 3)
-            post_trans:  (N_views, 3)
+        Returns (存入 results dict):
+            img_inputs: (placeholder, sensor2egos, ego2globals, intrins, post_rots, post_trans)
+            jpeg_bytes: list[bytes]  — N_cam 个 JPEG 原始字节
+            img_aug_params: list[tuple] — N_cam 个 (resize_dims, crop, flip, rotate)
         """
-        imgs = []
+        jpeg_bytes = []
+        img_aug_params = []
         sensor2egos = []
         ego2globals = []
         intrins = []
@@ -209,12 +179,17 @@ class PrepareImageInputs(object):
         post_trans = []
         cam_names = self.choose_cams()
         results['cam_names'] = cam_names
-        canvas = []
+
+        src_H, src_W = self.data_config.src_size   # (900, 1600)
 
         for cam_name in cam_names:
             cam_data = results['curr']['cams'][cam_name]
             filename = cam_data['data_path']
-            img = Image.open(filename)
+
+            # ---- 读取 JPEG 原始字节 (快速 I/O, 不解码) ----
+            with open(filename, 'rb') as f:
+                jpeg_data = f.read()
+            jpeg_bytes.append(jpeg_data)
 
             # 初始化图像增广的旋转和平移矩阵
             post_rot = torch.eye(2)
@@ -228,13 +203,15 @@ class PrepareImageInputs(object):
 
             # image view augmentation (resize, crop, horizontal flip, rotate)
             img_augs = self.sample_augmentation(
-                H=img.height, W=img.width, flip=flip, scale=scale)
+                H=src_H, W=src_W, flip=flip, scale=scale)
             resize, resize_dims, crop, flip, rotate = img_augs
 
-            # img: PIL.Image;  post_rot: Tensor (2, 2);  post_tran: Tensor (2, )
-            img, post_rot2, post_tran2 = \
-                self.img_transform(img, post_rot,
-                                   post_tran,
+            # 保存增广参数 (GPU 解码后应用)
+            img_aug_params.append((resize_dims, crop, flip, rotate))
+
+            # 计算 post_rot, post_tran 矩阵 (纯数学, 与原逻辑完全一致)
+            post_rot2, post_tran2 = \
+                self.img_transform(post_rot, post_tran,
                                    resize=resize,
                                    resize_dims=resize_dims,
                                    crop=crop,
@@ -242,66 +219,62 @@ class PrepareImageInputs(object):
                                    rotate=rotate)
 
             # for convenience, make augmentation matrices 3x3
-            # 以3x3矩阵表示图像的增广
             post_tran = torch.zeros(3)
             post_rot = torch.eye(3)
             post_tran[:2] = post_tran2
             post_rot[:2, :2] = post_rot2
 
-            canvas.append(np.array(img))    # 保存未归一化的图像，应该是为了做可视化.
-            imgs.append(self.normalize_img(img))
-
             if self.sequential:
                 assert 'adjacent' in results
                 for adj_info in results['adjacent']:
                     filename_adj = adj_info['cams'][cam_name]['data_path']
-                    img_adjacent = Image.open(filename_adj)
-                    # 对选择的邻近帧图像也进行增广, 增广参数与当前帧图像相同.
-                    img_adjacent = self.img_transform_core(
-                        img_adjacent,
-                        resize_dims=resize_dims,
-                        crop=crop,
-                        flip=flip,
-                        rotate=rotate)
-                    imgs.append(self.normalize_img(img_adjacent))
+                    with open(filename_adj, 'rb') as f:
+                        jpeg_bytes.append(f.read())
+                    img_aug_params.append((resize_dims, crop, flip, rotate))
 
-            intrins.append(intrin)      # 相机内参 (3, 3)
-            sensor2egos.append(sensor2ego)      # camera2ego变换 (4, 4)
-            ego2globals.append(ego2global)      # ego2global变换 (4, 4)
-            post_rots.append(post_rot)          # 图像增广旋转 (3, 3)
-            post_trans.append(post_tran)        # 图像增广平移 (3, ）
+            intrins.append(intrin)
+            sensor2egos.append(sensor2ego)
+            ego2globals.append(ego2global)
+            post_rots.append(post_rot)
+            post_trans.append(post_tran)
 
         if self.sequential:
             for adj_info in results['adjacent']:
-                # adjacent与current使用相同的图像增广, 相机内参也相同.
                 post_trans.extend(post_trans[:len(cam_names)])
                 post_rots.extend(post_rots[:len(cam_names)])
                 intrins.extend(intrins[:len(cam_names)])
 
                 for cam_name in cam_names:
-                    # 获得adjacent帧对应的camera2ego变换 (4, 4)和ego2global变换 (4, 4).
                     sensor2ego, ego2global = \
                         self.get_sensor_transforms(adj_info, cam_name)
                     sensor2egos.append(sensor2ego)
                     ego2globals.append(ego2global)
 
-        imgs = torch.stack(imgs)    # (N_views, 3, H, W)        # N_views = 6 * (N_history + 1)
+        # Placeholder for imgs — 实际数据将在 GPU 端由 DALI 填充
+        fH, fW = self.data_config.input_size   # (256, 704)
+        n_views = len(sensor2egos)
+        imgs_placeholder = torch.zeros(n_views, 3, fH, fW)
 
-        sensor2egos = torch.stack(sensor2egos)      # (N_views, 4, 4)
-        ego2globals = torch.stack(ego2globals)      # (N_views, 4, 4)
-        intrins = torch.stack(intrins)              # (N_views, 3, 3)
-        post_rots = torch.stack(post_rots)          # (N_views, 3, 3)
-        post_trans = torch.stack(post_trans)        # (N_views, 3)
-        results['canvas'] = canvas      # List[(H, W, 3), (H, W, 3), ...]     len = 6
+        sensor2egos = torch.stack(sensor2egos)
+        ego2globals = torch.stack(ego2globals)
+        intrins = torch.stack(intrins)
+        post_rots = torch.stack(post_rots)
+        post_trans = torch.stack(post_trans)
+        results['canvas'] = []
 
-        return imgs, sensor2egos, ego2globals, intrins, post_rots, post_trans
+        return (imgs_placeholder, sensor2egos, ego2globals, intrins,
+                post_rots, post_trans), jpeg_bytes, img_aug_params
 
     def __call__(self, results):
-        results['img_inputs'] = self.get_inputs(results)
+        img_inputs, jpeg_bytes, img_aug_params = self.get_inputs(results)
+        results['img_inputs'] = img_inputs
+        # DC(cpu_only=True) — collate 时收集为 list, scatter 时保留在 CPU
+        results['jpeg_bytes'] = DC(jpeg_bytes, stack=False, cpu_only=True)
+        results['img_aug_params'] = DC(img_aug_params, stack=False, cpu_only=True)
         return results
 
 
-@PIPELINES.register_module()
+@PIPELINES.register
 class LoadAnnotationsBEVDepth(object):
     def __init__(self, bda_aug_conf, classes, is_train=True):
         self.bda_aug_conf = bda_aug_conf
@@ -409,7 +382,7 @@ class LoadAnnotationsBEVDepth(object):
         return results
 
 
-@PIPELINES.register_module()
+@PIPELINES.register
 class PointToMultiViewDepth(object):
     def __init__(self, grid_config, downsample=1):
         self.downsample = downsample
@@ -449,6 +422,8 @@ class PointToMultiViewDepth(object):
         points_lidar = results['points']
         imgs, sensor2egos, ego2globals, intrins = results['img_inputs'][:4]
         post_rots, post_trans, bda = results['img_inputs'][4:]
+        # 使用 placeholder tensor 的 shape 获取目标图像尺寸
+        img_H, img_W = imgs.shape[2], imgs.shape[3]
         depth_map_list = []
         for cid in range(len(results['cam_names'])):
             cam_name = results['cam_names'][cid]    # CAM_TYPE
@@ -501,8 +476,8 @@ class PointToMultiViewDepth(object):
             points_img = points_img.matmul(
                 post_rots[cid].T) + post_trans[cid:cid + 1, :]      # (N_points, 3):  3: (u, v, d)
             depth_map = self.points2depthmap(points_img,
-                                             imgs.shape[2],     # H
-                                             imgs.shape[3]      # W
+                                             img_H,     # H
+                                             img_W      # W
                                              )
             depth_map_list.append(depth_map)
         depth_map = torch.stack(depth_map_list)
@@ -510,7 +485,7 @@ class PointToMultiViewDepth(object):
         return results
 
 
-@PIPELINES.register_module()
+@PIPELINES.register
 class LoadOccGTFromFile(object):
     def __call__(self, results):
         occ_gt_path = results['occ_gt_path']

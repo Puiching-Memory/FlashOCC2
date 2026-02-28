@@ -1,5 +1,4 @@
-"""训练钩子注册表 — pydantic 配置 + Registry."""
-from pydantic import BaseModel, ConfigDict
+"""训练钩子注册表."""
 
 from .registry import Registry
 
@@ -30,11 +29,4 @@ class Hook:
         pass
 
 
-class HookConfig(BaseModel):
-    """钩子配置基类 — 子类可扩展字段."""
-    model_config = ConfigDict(extra="allow")
-    type: str
-    priority: int = 50
-
-
-__all__ = ["HOOKS", "Hook", "HookConfig"]
+__all__ = ["HOOKS", "Hook"]

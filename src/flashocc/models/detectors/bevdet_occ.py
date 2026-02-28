@@ -1,17 +1,17 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch.nn.functional as F
 from .bevdet import BEVDet
-from flashocc.models import DETECTORS, build_head
+from flashocc.models import DETECTORS
 
 
-@DETECTORS.register_module()
+@DETECTORS.register
 class BEVDetOCC(BEVDet):
     def __init__(self,
                  occ_head=None,
                  upsample=False,
                  **kwargs):
         super(BEVDetOCC, self).__init__(**kwargs)
-        self.occ_head = build_head(occ_head)
+        self.occ_head = occ_head
         self.pts_bbox_head = None
         self.upsample = upsample
 

@@ -2,6 +2,7 @@
 import torch
 from flashocc.core.log import progress_bar
 from .trainer import scatter_data
+from flashocc.datasets.dali_decode import dali_decode_batch
 
 
 @torch.no_grad()
@@ -21,6 +22,8 @@ def single_gpu_test(model, data_loader, show=False, out_dir=None, **kwargs):
     results = []
     for data in progress_bar(data_loader, desc="Testing"):
         data = scatter_data(data)
+        if 'jpeg_bytes' in data:
+            data = dali_decode_batch(data)
         result = model(return_loss=False, **data)
         if hasattr(result, '__iter__') and not hasattr(result, 'keys') and not hasattr(result, 'shape'):
             results.extend(result)

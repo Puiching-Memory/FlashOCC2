@@ -20,7 +20,7 @@ class SyncbnControlConfig(BaseModel):
         return v
 
 
-@HOOKS.register_module()
+@HOOKS.register
 class SyncbnControlHook(Hook):
     """ """
 

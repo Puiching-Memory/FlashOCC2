@@ -5,11 +5,11 @@ Only the image pipeline is implemented because FlashOCC is camera-only.
 """
 import torch
 import torch.nn as nn
-from flashocc.core import BaseModule, force_fp32
-from flashocc.models import DETECTORS, build_backbone, build_neck, build_head
+from flashocc.core import BaseModule
+from flashocc.models import DETECTORS
 
 
-@DETECTORS.register_module()
+@DETECTORS.register
 class MVXTwoStageDetector(BaseModule):
     """Camera-only 3D 检测器基类.
 
@@ -27,11 +27,11 @@ class MVXTwoStageDetector(BaseModule):
         super().__init__(init_cfg=init_cfg)
 
         if img_backbone is not None:
-            self.img_backbone = build_backbone(img_backbone)
+            self.img_backbone = img_backbone
         if img_neck is not None:
-            self.img_neck = build_neck(img_neck)
+            self.img_neck = img_neck
         if pts_bbox_head is not None:
-            self.pts_bbox_head = build_head(pts_bbox_head)
+            self.pts_bbox_head = pts_bbox_head
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg

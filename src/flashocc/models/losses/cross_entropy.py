@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from flashocc.models import LOSSES
+
 from flashocc.models.losses.utils import weight_reduce_loss
 
 
@@ -71,7 +72,7 @@ def mask_cross_entropy(pred, target, label, reduction='mean', avg_factor=None,
         pred_slice, target, weight=class_weight, reduction='mean')[None]
 
 
-@LOSSES.register_module(force=True)
+@LOSSES.register(force=True)
 class CrossEntropyLoss(nn.Module):
     def __init__(self, use_sigmoid=False, use_mask=False, reduction='mean',
                  class_weight=None, ignore_index=None, loss_weight=1.0,

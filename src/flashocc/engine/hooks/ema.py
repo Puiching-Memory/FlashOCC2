@@ -78,7 +78,7 @@ class ModelEMA:
                     v += (1.0 - d) * msd[k].detach()
 
 
-@HOOKS.register_module()
+@HOOKS.register
 class MEGVIIEMAHook(Hook):
     """EMAHook used in BEVDepth — pydantic 验证配置参数.
 

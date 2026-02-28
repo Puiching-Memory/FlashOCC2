@@ -31,14 +31,4 @@ def force_fp32(apply_to=None, out_fp16: bool = False):
     return decorator
 
 
-_BN_TYPES = (nn.BatchNorm2d, nn.BatchNorm3d, nn.SyncBatchNorm)
-_BN_TYPE_NAMES = frozenset(t.__name__ for t in _BN_TYPES)
 
-
-def wrap_fp16_model(model: nn.Module) -> nn.Module:
-    """将模型转为 fp16 (BN 保持 fp32)."""
-    for m in model.modules():
-        if type(m).__name__ in _BN_TYPE_NAMES:
-            m.float()
-    model.half()
-    return model

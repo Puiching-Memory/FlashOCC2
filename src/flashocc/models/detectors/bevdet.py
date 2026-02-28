@@ -3,19 +3,19 @@ import torch
 import torch.nn.functional as F
 from flashocc.core import force_fp32
 
-from flashocc.models import DETECTORS, build_backbone, build_neck
+from flashocc.models import DETECTORS
 from flashocc.models.detectors.base import MVXTwoStageDetector
 
 
-@DETECTORS.register_module()
+@DETECTORS.register
 class BEVDet(MVXTwoStageDetector):
     def __init__(self, img_backbone, img_neck, img_view_transformer, img_bev_encoder_backbone, img_bev_encoder_neck,
                  pts_bbox_head=None, **kwargs):
         super(BEVDet, self).__init__(img_backbone=img_backbone, img_neck=img_neck, pts_bbox_head=pts_bbox_head,
                                      **kwargs)
-        self.img_view_transformer = build_neck(img_view_transformer)
-        self.img_bev_encoder_backbone = build_backbone(img_bev_encoder_backbone)
-        self.img_bev_encoder_neck = build_neck(img_bev_encoder_neck)
+        self.img_view_transformer = img_view_transformer
+        self.img_bev_encoder_backbone = img_bev_encoder_backbone
+        self.img_bev_encoder_neck = img_bev_encoder_neck
 
     def image_encoder(self, img, stereo=False):
         """

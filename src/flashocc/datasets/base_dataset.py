@@ -25,7 +25,6 @@ class Custom3DDataset(Dataset):
     """
 
     CLASSES = None
-    PALETTE = None
 
     def __init__(self,
                  data_root,
@@ -142,11 +141,6 @@ class Custom3DDataset(Dataset):
     def pre_pipeline(self, results):
         """Pre-processing before pipeline (add paths etc.)."""
         results['img_prefix'] = self.data_root
-        results['seg_prefix'] = self.data_root
-        results['proposal_file'] = None
-        results['bbox_fields'] = []
-        results['mask_fields'] = []
-        results['seg_fields'] = []
         results['box_type_3d'] = self.box_type_3d
         results['box_mode_3d'] = 0  # LiDAR
 

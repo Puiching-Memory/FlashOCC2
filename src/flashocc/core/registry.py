@@ -57,18 +57,6 @@ class Registry:
 
         raise TypeError(f"register 期望类或字符串, 收到 {type(cls_or_name)}")
 
-    # 兼容旧版 register_module 调用方式
-    def register_module(self, name=None, force=False, module=None):
-        """兼容 mmcv 式 register_module."""
-        if module is not None:
-            self._do_register(module, name=name, force=force)
-            return module
-
-        def wrapper(cls):
-            self._do_register(cls, name=name, force=force)
-            return cls
-        return wrapper
-
     def _do_register(self, cls, *, name: str | None = None, force: bool = False):
         reg_name = name or cls.__name__
         if reg_name in self._module_dict and not force:

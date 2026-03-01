@@ -4,6 +4,12 @@
 
 基于 [FlashOCC](https://arxiv.org/abs/2311.12058)、[Panoptic-FlashOCC](https://arxiv.org/pdf/2406.10527) 和 [UltimateDO](https://arxiv.org/abs/2409.11160)。
 
+## 特色
+
+- 修复了BGR颜色通道问题 https://github.com/HuangJunJie2017/BEVDet/issues/274
+- 新的BEV pool V3 支持 torch.compiled CUDA，显著提升性能
+- DAIL数据管道
+
 ## 快速开始
 
 ```bash
@@ -102,11 +108,11 @@ experiment = Experiment(
 
 ## 性能指标
 
-| 模型 | 骨干网络 | 输入尺寸 | mIoU | 参数量 |
-|------|---------|---------|------|--------|
-| FlashOCC M1 (1f) | R50 | 256×704 | 32.08 | 44.74M |
-| FlashOCC-4D-Stereo (2f) | R50 | 256×704 | 37.84 | - |
-| FlashOCC-4D-Stereo (2f) | Swin-B | 512×1408 | 43.52 | 144.99M |
+| 模型                    | 骨干网络 | 输入尺寸 | mIoU  | 参数量  |
+| ----------------------- | -------- | -------- | ----- | ------- |
+| FlashOCC M1 (1f)        | R50      | 256×704  | 32.08 | 44.74M  |
+| FlashOCC-4D-Stereo (2f) | R50      | 256×704  | 37.84 | -       |
+| FlashOCC-4D-Stereo (2f) | Swin-B   | 512×1408 | 43.52 | 144.99M |
 
 ## 文档
 

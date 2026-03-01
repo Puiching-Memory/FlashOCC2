@@ -141,7 +141,10 @@ def main():
                                   non_blocking=exp.dataloader_non_blocking)
 
         if 'jpeg_bytes' in data_batch:
-            data_batch = dali_decode_batch(data_batch)
+            data_batch = dali_decode_batch(
+                data_batch,
+                color_order=exp.image_color_order,
+            )
 
         if getattr(exp, 'use_channels_last', False) and 'img_inputs' in data_batch:
             img_inputs = data_batch['img_inputs']

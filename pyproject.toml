@@ -24,6 +24,9 @@ dependencies = [
     "pydantic>=2.10",
     "plum-dispatch>=2.5",
     "matplotlib>=3.8",
+    "ultralytics-thop",
+    "trackio",
+    "nvidia-ml-py"
 ]
 
 [build-system]

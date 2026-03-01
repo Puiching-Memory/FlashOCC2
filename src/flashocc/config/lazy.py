@@ -102,6 +102,8 @@ class Experiment(BaseModel):
     dataloader_prefetch_factor: Optional[int] = 2
     dataloader_drop_last: bool = False
     dataloader_non_blocking: bool = True
+    image_color_order: str = "RGB"  # "BGR" | "RGB"
+    freeze_modules: list[str] = []
 
     # ---- 优化器 (Lazy 包装 torch.optim 类) ----
     optimizer: Lazy = Lazy(torch.optim.AdamW, lr=1e-4, weight_decay=1e-2)
@@ -125,12 +127,28 @@ class Experiment(BaseModel):
 
     # ---- 检查点 ----
     checkpoint_interval: int = 1
-    max_keep_ckpts: int = 5
+    max_keep_ckpts: int = -1  # -1 表示不删除
+
+    # ---- EMA ----
+    use_ema: bool = False
+    ema_decay: float = 0.9990
+    ema_init_updates: int = 0
+    ema_resume: Optional[str] = None
+
+    # ---- 实验跟踪 (trackio) ----
+    trackio_project: Optional[str] = None  # 不为 None 即启用 trackio
+    trackio_group: Optional[str] = None
+    trackio_name: Optional[str] = None     # run 名称, None 时自动生成
+
+    # ---- 训练钩子 ----
+    hooks: list[Lazy] = []
+
+    # ---- 并行策略 (DeviceMesh) ----
+    parallel_mode: str = "ddp"  # "ddp" | "fsdp2"
 
     # ---- 运行时 ----
     work_dir: Optional[str] = None
     seed: int = 0
-    log_interval: int = 50
     find_unused_parameters: bool = False
     cudnn_benchmark: bool = True
     allow_tf32: bool = True
@@ -188,6 +206,35 @@ class Experiment(BaseModel):
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"warmup_ratio 应在 [0, 1], 收到 {v}")
         return v
+
+    @field_validator("image_color_order")
+    @classmethod
+    def _image_color_order_valid(cls, v: str) -> str:
+        vv = v.upper()
+        if vv not in {"BGR", "RGB"}:
+            raise ValueError(f"image_color_order 必须为 'BGR' 或 'RGB', 收到 {v}")
+        return vv
+
+    @field_validator("parallel_mode")
+    @classmethod
+    def _parallel_mode_valid(cls, v: str) -> str:
+        allowed = {"ddp", "fsdp2"}
+        if v not in allowed:
+            raise ValueError(
+                f"parallel_mode 必须为 {sorted(allowed)} 之一, 收到 {v}"
+            )
+        return v
+
+    @field_validator("freeze_modules")
+    @classmethod
+    def _freeze_modules_valid(cls, v: list[str]) -> list[str]:
+        out = []
+        for name in v:
+            name = str(name).strip()
+            if not name:
+                raise ValueError("freeze_modules 中不允许空字符串")
+            out.append(name)
+        return out
 
     # ================================================================
     #  构建方法

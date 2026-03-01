@@ -76,12 +76,31 @@ class Metric_mIoU:
         from flashocc.core.log import logger
         # 计算 per-class IoU
         mIoU = self.jaccard.compute().numpy()
+
+        # 获取混淆矩阵 (torchmetrics 内部 confmat)
+        confmat = None
+        if hasattr(self.jaccard, 'confmat'):
+            confmat = self.jaccard.confmat.cpu().numpy()
+
         logger.info(f'===> per class IoU of {self.cnt} samples:')
+        per_class = {}
         for i in range(self.num_classes - 1):
-            logger.info(f'===> {self.class_names[i]} - IoU = {round(mIoU[i] * 100, 2)}')
+            iou_val = round(float(mIoU[i]) * 100, 2)
+            logger.info(f'===> {self.class_names[i]} - IoU = {iou_val}')
+            per_class[self.class_names[i]] = iou_val
+
         mean_iou = float(np.nanmean(mIoU[:self.num_classes - 1]) * 100)
         logger.info(f'===> mIoU of {self.cnt} samples: {round(mean_iou, 2)}')
-        return {'mIoU': mIoU}
+
+        result = {
+            'mIoU': mIoU,
+            'mIoU_mean': mean_iou,
+            'per_class_iou': per_class,
+            'num_samples': self.cnt,
+        }
+        if confmat is not None:
+            result['confusion_matrix'] = confmat
+        return result
 
 
 class Metric_FScore:

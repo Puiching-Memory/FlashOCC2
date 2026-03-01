@@ -214,6 +214,8 @@ experiment = Experiment(
     dataloader_prefetch_factor=4,
     dataloader_drop_last=True,       # DDP + torch.compile(reduce-overhead) 必须 True，否则最后一个 batch 形状不同会触发 CUDA Graph 重录导致死锁
     dataloader_non_blocking=True,
+    image_color_order="BGR",
+    freeze_modules=[],               # 例如: ["img_backbone", "img_neck"]
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
     lr_scheduler=Lazy(MultiStepLR, milestones=[24], gamma=0.1),
@@ -225,14 +227,22 @@ experiment = Experiment(
     # load_from="ckpts/bevdet-r50-cbgs.pth", # 在此处的权重会覆盖所有其他权重
 
     checkpoint_interval=1,
-    max_keep_ckpts=5,
+    max_keep_ckpts=-1,
 
-    log_interval=50,
     seed=0,
     cudnn_benchmark=True,
     allow_tf32=True,
     float32_matmul_precision="high",
     optimizer_set_to_none=True,
+
+    # ---- EMA ----
+    use_ema=True,
+    ema_decay=0.9990,
+    ema_init_updates=0,
+
+    # ---- 实验跟踪 (trackio) ----
+    trackio_project="flashocc2",
+    trackio_group="flashocc_r50",
 
     # ---- 性能优化 (profiling 结果指导) ----
     use_amp=True,                     # BF16 混合精度 — conv/BN 加速 ~2-3x
@@ -240,5 +250,5 @@ experiment = Experiment(
     use_channels_last=True,           # 消除 NCHW ↔ NHWC 转换开销 (~250ms/iter)
     use_compile=True,                # torch.compile (可选, 首次编译较慢)
     compile_backend="inductor",
-    compile_mode="reduce-overhead",
+    compile_mode="default", # default | reduce-overhead | max-autotune | max-autotune-no-cudagraphs
 )

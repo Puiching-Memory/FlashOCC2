@@ -8,7 +8,7 @@ from .base_module import (
     InitConfig,
 )
 from .checkpoint import load_checkpoint, load_state_dict
-from .dist import get_dist_info, init_dist, master_only
+from .dist import get_dist_info, init_dist, master_only, get_mesh, setup_parallel
 from .fp16 import force_fp32
 from .env import collect_env, setup_multi_processes
 from .functional import reduce_mean
@@ -19,7 +19,7 @@ __all__ = [
     "PretrainedInit", "XavierInit", "KaimingInit", "ConstantInit", "NormalInit",
     "InitConfig",
     "load_checkpoint", "load_state_dict",
-    "get_dist_info", "init_dist", "master_only",
+    "get_dist_info", "init_dist", "master_only", "get_mesh", "setup_parallel",
     "force_fp32",
     "setup_multi_processes",
     "collect_env",

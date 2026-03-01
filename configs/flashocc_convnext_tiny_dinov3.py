@@ -210,6 +210,8 @@ experiment = Experiment(
     dataloader_prefetch_factor=4,
     dataloader_drop_last=True,
     dataloader_non_blocking=True,
+    image_color_order="RGB",
+    freeze_modules=["img_backbone"],  # 例如: ["img_backbone", "img_neck"]
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
     lr_scheduler=Lazy(MultiStepLR, milestones=[24], gamma=0.1),
@@ -221,19 +223,27 @@ experiment = Experiment(
     # load_from="ckpts/convnext_tiny_dinov3.pth",
 
     checkpoint_interval=1,
-    max_keep_ckpts=5,
+    max_keep_ckpts=-1,
 
-    log_interval=50,
     seed=0,
     cudnn_benchmark=True,
     allow_tf32=True,
     float32_matmul_precision="high",
     optimizer_set_to_none=True,
 
+    # ---- EMA ----
+    use_ema=True,
+    ema_decay=0.9990,
+    ema_init_updates=0,
+
+    # ---- 实验跟踪 (trackio) ----
+    trackio_project="flashocc2",
+    trackio_group="flashocc_convnext_tiny_dinov3",
+
     use_amp=True,
     amp_dtype="bfloat16",
     use_channels_last=True,
     use_compile=True,
     compile_backend="inductor",
-    compile_mode="reduce-overhead",
+    compile_mode="default", # default | reduce-overhead | max-autotune | max-autotune-no-cudagraphs
 )

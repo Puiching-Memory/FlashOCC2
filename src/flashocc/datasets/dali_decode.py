@@ -3,7 +3,7 @@
 所有图像变换全部在 DALI GPU 管道中完成:
   1) DataLoader workers 读取 JPEG 原始字节 + 计算增广参数 (CPU)
   2) collate 后, GPU 上一次管道调用批量完成:
-     nvJPEG 解码(BGR) → Resize → Crop(支持负偏移) → Rotate → Flip+Normalize+CHW
+    nvJPEG 解码(BGR/RGB) → Resize → Crop(支持负偏移) → Rotate → Flip+Normalize+CHW
   3) 统一形状输出 → as_tensor() 批量拷贝到 PyTorch
 
 典型耗时: ~20ms/batch (H800, 4×6=24 images, 1600×900 JPEG → 704×256 float32)
@@ -23,7 +23,7 @@ from flashocc.constants import IMAGENET_MEAN, IMAGENET_STD
 
 # =====================================================================
 #  全 DALI Pipeline:
-#  decode(BGR) → resize → slice(crop) → rotate → crop_mirror_normalize
+#  decode(BGR/RGB) → resize → slice(crop) → rotate → crop_mirror_normalize
 # =====================================================================
 
 class DALIBatchDecoder:
@@ -36,7 +36,7 @@ class DALIBatchDecoder:
         4. fn.rotate — per-image 旋转 (角度已补偿 flip 顺序)
         5. fn.crop_mirror_normalize — flip + normalize + HWC→CHW
 
-    输出: (N, 3, tH, tW) float32 BGR normalized, 全部 shape 相同.
+    输出: (N, 3, tH, tW) float32 normalized, 全部 shape 相同.
 
     归一化说明:
         原管道: PIL(RGB) → [::-1](BGR) → subtract IMAGENET_MEAN → divide IMAGENET_STD
@@ -45,12 +45,16 @@ class DALIBatchDecoder:
     """
 
     def __init__(self, max_batch_size: int = 48, device_id: int = 0,
-                 num_threads: int = 4, target_h: int = 256, target_w: int = 704):
+                 num_threads: int = 4, target_h: int = 256, target_w: int = 704,
+                 color_order: str = "BGR"):
         self.max_batch_size = max_batch_size
         self.device_id = device_id
         self.num_threads = num_threads
         self.target_h = target_h
         self.target_w = target_w
+        self.color_order = color_order.upper()
+        if self.color_order not in {"BGR", "RGB"}:
+            raise ValueError(f"color_order 必须为 'BGR' 或 'RGB', 收到 {color_order}")
         self._pipe: Pipeline | None = None
         self._built_bs: int = 0
 
@@ -80,9 +84,10 @@ class DALIBatchDecoder:
                                               device="cpu")
             do_flip = fn.external_source(name="do_flip", device="cpu")
 
-            # 1) nvJPEG 硬件解码 → BGR (直接匹配原管道通道顺序)
+            # 1) nvJPEG 硬件解码 → BGR/RGB
+            output_type = types.BGR if self.color_order == "BGR" else types.RGB
             images = fn.decoders.image(jpegs, device="mixed",
-                                       output_type=types.BGR,
+                                       output_type=output_type,
                                        hw_decoder_load=0.7)
 
             # 2) Per-image GPU resize
@@ -109,8 +114,7 @@ class DALIBatchDecoder:
                                interp_type=types.INTERP_LINEAR)
 
             # 5) Flip + Normalize + HWC→CHW (融合内核)
-            #    BGR 解码 + IMAGENET_MEAN/STD → 精确复现原管道:
-            #    B − 123.675, G − 116.28, R − 103.53  (除以对应 std)
+            # BGR 模式: 兼容历史管道; RGB 模式: 匹配 RGB 预训练骨干.
             images = fn.crop_mirror_normalize(
                 images,
                 crop=(tH, tW),
@@ -141,7 +145,7 @@ class DALIBatchDecoder:
             aug_params_list: N 个 (resize_dims, crop, flip, rotate) 元组.
 
         Returns:
-            (N, 3, target_h, target_w) float32 BGR normalized GPU tensor.
+            (N, 3, target_h, target_w) float32 normalized GPU tensor.
         """
         N = len(jpeg_bytes_list)
         device = f"cuda:{self.device_id}"
@@ -203,22 +207,25 @@ class DALIBatchDecoder:
 #  全局单例
 # =====================================================================
 
-_GLOBAL_DECODER: DALIBatchDecoder | None = None
+_GLOBAL_DECODERS: dict[tuple[int, int, int, str], DALIBatchDecoder] = {}
 
 
 def get_dali_decoder(device_id: int = 0,
                      target_h: int = 256,
-                     target_w: int = 704) -> DALIBatchDecoder:
-    global _GLOBAL_DECODER
-    if _GLOBAL_DECODER is None or _GLOBAL_DECODER.device_id != device_id:
-        _GLOBAL_DECODER = DALIBatchDecoder(
+                     target_w: int = 704,
+                     color_order: str = "RGB") -> DALIBatchDecoder:
+    global _GLOBAL_DECODERS
+    key = (device_id, target_h, target_w, color_order.upper())
+    if key not in _GLOBAL_DECODERS:
+        _GLOBAL_DECODERS[key] = DALIBatchDecoder(
             max_batch_size=48,
             device_id=device_id,
             num_threads=4,
             target_h=target_h,
             target_w=target_w,
+            color_order=color_order,
         )
-    return _GLOBAL_DECODER
+    return _GLOBAL_DECODERS[key]
 
 
 # =====================================================================
@@ -227,7 +234,8 @@ def get_dali_decoder(device_id: int = 0,
 
 @torch.no_grad()
 def dali_decode_batch(data_batch: dict, target_h: int = 256,
-                      target_w: int = 704) -> dict:
+                      target_w: int = 704,
+                      color_order: str = "RGB") -> dict:
     """collate 后在 GPU 上批量 DALI 解码 + 全变换."""
     if "jpeg_bytes" not in data_batch:
         return data_batch
@@ -236,7 +244,7 @@ def dali_decode_batch(data_batch: dict, target_h: int = 256,
     aug_params_batch = data_batch.pop("img_aug_params")
 
     device_id = torch.cuda.current_device()
-    decoder = get_dali_decoder(device_id, target_h, target_w)
+    decoder = get_dali_decoder(device_id, target_h, target_w, color_order=color_order)
 
     B = len(jpeg_bytes_batch)
     N_cam = len(jpeg_bytes_batch[0])

@@ -3,6 +3,7 @@
  dict 配置, 所有参数从 Experiment 字段读取。
 使用 plum-dispatch 替代 stdlib singledispatch 实现 collate 和 scatter。
 """
+import csv
 import os
 
 import numpy as np
@@ -13,6 +14,7 @@ from tqdm import tqdm
 from plum import dispatch
 
 from flashocc.core import get_dist_info
+from flashocc.core.dist import setup_parallel
 from flashocc.core.log import logger
 from flashocc.engine.parallel import DataContainer
 from flashocc.datasets.dali_decode import dali_decode_batch
@@ -209,8 +211,8 @@ def _get_warmup_lr(base_lr: float, warmup_ratio: float,
 #  训练主循环
 # =====================================================================
 
-def train_model(experiment, model, distributed=False, validate=False,
-                timestamp=None, meta=None, gpu_ids=None):
+def train_model(experiment, model, mesh=None, validate=False,
+                timestamp=None, meta=None):
     """训练入口 — 直接消费 Experiment 对象.
 
     Parameters
@@ -219,10 +221,11 @@ def train_model(experiment, model, distributed=False, validate=False,
         实验配置.
     model : nn.Module
         已构建的模型 (可能已加载预训练).
-    distributed : bool
-        是否 DDP.
+    mesh : DeviceMesh or None
+        全局 DeviceMesh, None 表示单卡训练.
     """
     exp = experiment
+    distributed = mesh is not None
 
     # ---- 工作目录 ----
     work_dir = exp.work_dir or "work_dirs"
@@ -230,12 +233,12 @@ def train_model(experiment, model, distributed=False, validate=False,
 
     # ---- 数据 ----
     dataset = exp.build_train_dataset()
-    gpu_count = len(gpu_ids) if gpu_ids else 1
+    _, world_size = get_dist_info()
     data_loader = build_dataloader(
         dataset,
         samples_per_gpu=exp.samples_per_gpu,
         workers_per_gpu=exp.workers_per_gpu,
-        num_gpus=gpu_count,
+        num_gpus=world_size,
         dist_mode=distributed,
         seed=exp.seed,
         pin_memory=exp.dataloader_pin_memory,
@@ -265,13 +268,13 @@ def train_model(experiment, model, distributed=False, validate=False,
         model = model.to(memory_format=torch.channels_last)
         logger.info("启用 channels_last 内存格式")
 
-    if distributed:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model,
-            device_ids=[torch.cuda.current_device()],
-            broadcast_buffers=False,
-            find_unused_parameters=exp.find_unused_parameters,
-        )
+    # ---- 并行策略 (基于 DeviceMesh) ----
+    parallel_mode = getattr(exp, 'parallel_mode', 'ddp')
+    model = setup_parallel(
+        model, mesh, mode=parallel_mode,
+        broadcast_buffers=False,
+        find_unused_parameters=exp.find_unused_parameters,
+    )
 
     # ---- torch.compile ----
     if getattr(exp, 'use_compile', False):
@@ -309,13 +312,64 @@ def train_model(experiment, model, distributed=False, validate=False,
     rank, _ = get_dist_info()
     is_main_process = (rank == 0)
 
+    # ---- EMA (Exponential Moving Average) ----
+    ema_model = None
+    if getattr(exp, 'use_ema', False):
+        from flashocc.engine.hooks.ema import ModelEMA
+        ema_decay = getattr(exp, 'ema_decay', 0.9990)
+        ema_init_updates = getattr(exp, 'ema_init_updates', 0)
+        ema_resume = getattr(exp, 'ema_resume', None)
+        ema_model = ModelEMA(model, decay=ema_decay, updates=ema_init_updates)
+        if ema_resume is not None:
+            from flashocc.core import load_state_dict
+            cpt = torch.load(ema_resume, map_location='cpu')
+            load_state_dict(ema_model.ema, cpt['state_dict'])
+            ema_model.updates = cpt.get('updates', 0)
+            logger.info(f"恢复 EMA checkpoint: {ema_resume}")
+        logger.info(f"启用 EMA, decay={ema_decay}")
+
+    # ---- trackio 实验跟踪 ----
+    trackio_run = None
+    if is_main_process and getattr(exp, 'trackio_project', None):
+        try:
+            import trackio
+            trackio_run = trackio.init(
+                project=exp.trackio_project,
+                name=getattr(exp, 'trackio_name', None) or timestamp,
+                group=getattr(exp, 'trackio_group', None),
+                config={
+                    "max_epochs": max_epochs,
+                    "samples_per_gpu": exp.samples_per_gpu,
+                    "lr": base_lr,
+                    "grad_max_norm": grad_max_norm,
+                    "use_amp": exp.use_amp,
+                    "amp_dtype": getattr(exp, 'amp_dtype', None),
+                    "use_ema": getattr(exp, 'use_ema', False),
+                    "use_compile": getattr(exp, 'use_compile', False),
+                    "model": exp.model.cls.__name__,
+                },
+            )
+            logger.info(f"启用 trackio 实验跟踪, project={exp.trackio_project}")
+        except Exception as e:
+            logger.warning(f"trackio 初始化失败: {e}, 继续训练但不记录")
+            trackio_run = None
+
     logger.info(f"开始训练, 共 {max_epochs} epochs, 工作目录: {work_dir}")
+
+    # ---- loss 日志 CSV ----
+    loss_csv_path = os.path.join(work_dir, "train_loss.csv")
+    loss_csv_header_written = False
 
     global_iter = 0
     for epoch in range(max_epochs):
         model.train()
         if distributed and hasattr(data_loader.sampler, "set_epoch"):
             data_loader.sampler.set_epoch(epoch)
+
+        # 用于累计 epoch 级 loss 统计
+        epoch_loss_sum = 0.0
+        epoch_loss_detail: dict[str, float] = {}
+        epoch_steps = 0
 
         pbar = tqdm(
             data_loader,
@@ -338,7 +392,10 @@ def train_model(experiment, model, distributed=False, validate=False,
 
             # ---- DALI GPU 图像解码 ----
             if 'jpeg_bytes' in data_batch:
-                data_batch = dali_decode_batch(data_batch)
+                data_batch = dali_decode_batch(
+                    data_batch,
+                    color_order=exp.image_color_order,
+                )
 
             # ---- channels_last for input images ----
             if getattr(exp, 'use_channels_last', False):
@@ -354,6 +411,9 @@ def train_model(experiment, model, distributed=False, validate=False,
                             data_batch['img_inputs'] = [imgs] + list(img_inputs[1:])
 
             # ---- Forward with AMP ----
+            # 每次前向前标记新 step，避免 CUDA Graphs 张量被后续 run 覆盖
+            # 参见: https://pytorch.org/docs/stable/compiler_cudagraph_trees.html
+            torch.compiler.cudagraph_mark_step_begin()
             with torch.amp.autocast('cuda', dtype=amp_dtype, enabled=use_amp):
                 losses = model(return_loss=True, **data_batch)
 
@@ -381,15 +441,63 @@ def train_model(experiment, model, distributed=False, validate=False,
             scaler.update()
             global_iter += 1
 
+            # ---- EMA 更新 ----
+            if ema_model is not None:
+                ema_model.update(None, model)
+
+            # 累计 epoch 级 loss
+            epoch_loss_sum += total_loss.item()
+            for k, v in loss_log.items():
+                epoch_loss_detail[k] = epoch_loss_detail.get(k, 0.0) + v
+            epoch_steps += 1
+
             lr = optimizer.param_groups[0]["lr"]
             pbar.set_postfix({
                 "lr": f"{lr:.2e}",
                 "loss": f"{total_loss.item():.4f}",
             })
 
+            # ---- trackio: 记录每步 loss ----
+            if trackio_run is not None:
+                import trackio
+                trackio.log({"loss": total_loss.item(), "lr": lr, **loss_log},
+                            step=global_iter)
+
         # epoch 结束 → LR step
         if lr_scheduler is not None:
             lr_scheduler.step()
+
+        # ---- 记录 epoch 平均 loss 到日志和 CSV ----
+        if epoch_steps > 0 and is_main_process:
+            avg_loss = epoch_loss_sum / epoch_steps
+            avg_detail = {k: v / epoch_steps for k, v in epoch_loss_detail.items()}
+            detail_str = ", ".join(f"{k}={v:.4f}" for k, v in avg_detail.items())
+            logger.info(
+                f"Epoch [{epoch + 1}/{max_epochs}] 平均 loss: {avg_loss:.4f} ({detail_str}), "
+                f"lr: {optimizer.param_groups[0]['lr']:.2e}"
+            )
+
+            # 写 CSV
+            row = {"epoch": epoch + 1, "avg_loss": avg_loss, "lr": optimizer.param_groups[0]["lr"]}
+            row.update(avg_detail)
+            if not loss_csv_header_written:
+                with open(loss_csv_path, "w", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+                    writer.writeheader()
+                    writer.writerow(row)
+                loss_csv_header_written = True
+                logger.info(f"Loss CSV 创建: {loss_csv_path}")
+            else:
+                with open(loss_csv_path, "a", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+                    writer.writerow(row)
+
+            # ---- trackio: 记录 epoch 级指标 ----
+            if trackio_run is not None:
+                import trackio
+                epoch_metrics = {"epoch": epoch + 1, "avg_loss": avg_loss}
+                epoch_metrics.update({f"avg_{k}": v for k, v in avg_detail.items()})
+                trackio.log(epoch_metrics, step=global_iter)
 
         # 保存 checkpoint（仅主进程写盘，避免多 rank 竞争同一文件）
         if is_main_process:
@@ -403,9 +511,41 @@ def train_model(experiment, model, distributed=False, validate=False,
             torch.save(state, ckpt_path)
             logger.info(f"已保存 checkpoint: {ckpt_path}")
 
+            # ---- EMA checkpoint ----
+            if ema_model is not None:
+                ema_ckpt_path = os.path.join(work_dir, f"epoch_{epoch+1}_ema.pth")
+                ema_state = {
+                    "epoch": epoch + 1,
+                    "state_dict": ema_model.ema.state_dict(),
+                    "updates": ema_model.updates,
+                }
+                torch.save(ema_state, ema_ckpt_path)
+                logger.info(f"已保存 EMA checkpoint: {ema_ckpt_path}")
+
+            # 清理旧 checkpoint (max_keep_ckpts > 0 时保留最新 N 个, -1 表示不删除)
+            max_keep = getattr(exp, 'max_keep_ckpts', -1)
+            if max_keep > 0:
+                import glob as _glob
+                ckpt_files = sorted(
+                    _glob.glob(os.path.join(work_dir, "epoch_*.pth")),
+                    key=os.path.getmtime,
+                )
+                # 排除 EMA checkpoint (epoch_*_ema.pth)
+                ckpt_files = [f for f in ckpt_files if not f.endswith("_ema.pth")]
+                while len(ckpt_files) > max_keep:
+                    old = ckpt_files.pop(0)
+                    os.remove(old)
+                    logger.info(f"已删除旧 checkpoint: {old}")
+
         # epoch 级同步，防止 rank 间进度漂移
         if distributed and dist.is_available() and dist.is_initialized():
             dist.barrier()
+
+    # ---- trackio 结束 ----
+    if trackio_run is not None:
+        import trackio
+        trackio.finish()
+        logger.info("trackio 实验跟踪已结束")
 
     logger.info("训练完成。")
 

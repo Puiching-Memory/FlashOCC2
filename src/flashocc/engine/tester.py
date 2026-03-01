@@ -8,7 +8,7 @@ from flashocc.datasets.dali_decode import dali_decode_batch
 
 def single_gpu_test(model, data_loader, show=False, out_dir=None, *,
                     amp_dtype=None, use_channels_last=False,
-                    non_blocking=False, **kwargs):
+                    non_blocking=False, img_color_order="RGB", **kwargs):
     """单 GPU 测试.
 
     Args:
@@ -30,7 +30,7 @@ def single_gpu_test(model, data_loader, show=False, out_dir=None, *,
         for data in progress_bar(data_loader, desc="Testing"):
             data = scatter_data(data, non_blocking=non_blocking)
             if 'jpeg_bytes' in data:
-                data = dali_decode_batch(data)
+                data = dali_decode_batch(data, color_order=img_color_order)
             # channels_last: 将输入图像转换为 NHWC 格式
             if use_channels_last and 'img_inputs' in data:
                 img_inputs = data['img_inputs']

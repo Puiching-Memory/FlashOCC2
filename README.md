@@ -102,11 +102,11 @@ All model components are imported directly — IDE navigation, refactoring, and 
 
 ## Metrics
 
-| Model | Backbone | Input | mIoU | Params |
-|-------|----------|-------|------|--------|
-| FlashOCC M1 (1f) | R50 | 256×704 | 32.08 | 44.74M |
-| FlashOCC-4D-Stereo (2f) | R50 | 256×704 | 37.84 | - |
-| FlashOCC-4D-Stereo (2f) | Swin-B | 512×1408 | 43.52 | 144.99M |
+| Model                   | Backbone | Input    | mIoU  | Params  |
+| ----------------------- | -------- | -------- | ----- | ------- |
+| FlashOCC M1 (1f)        | R50      | 256×704  | 32.08 | 44.74M  |
+| FlashOCC-4D-Stereo (2f) | R50      | 256×704  | 37.84 | -       |
+| FlashOCC-4D-Stereo (2f) | Swin-B   | 512×1408 | 43.52 | 144.99M |
 
 ## Documentation
 

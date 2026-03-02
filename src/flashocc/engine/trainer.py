@@ -1,7 +1,6 @@
 """训练引擎 — 直接消费 Experiment 对象.
 
- dict 配置, 所有参数从 Experiment 字段读取。
-使用 plum-dispatch 替代 stdlib singledispatch 实现 collate 和 scatter。
+所有参数从 Experiment 字段读取。
 """
 import csv
 import os
@@ -11,7 +10,6 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
-from plum import dispatch
 
 from flashocc.core import get_dist_info
 from flashocc.core.dist import setup_parallel
@@ -21,49 +19,29 @@ from flashocc.datasets.dali_decode import dali_decode_batch
 
 
 # =====================================================================
-#  DataLoader — plum-dispatch collate
+#  DataLoader — collate
 # =====================================================================
 
-@dispatch
-def _collate_elem(elem: DataContainer, batch: list) -> DataContainer:
-    if batch[0].stack:
-        stacked = torch.stack([s.data for s in batch], dim=0)
-        return DataContainer(stacked, stack=batch[0].stack,
-                             padding_value=batch[0].padding_value,
-                             cpu_only=batch[0].cpu_only)
-    else:
-        return DataContainer([s.data for s in batch],
-                             stack=False, cpu_only=batch[0].cpu_only)
-
-
-@dispatch
-def _collate_elem(elem: dict, batch: list):
-    return {key: collate_fn([d[key] for d in batch]) for key in batch[0]}
-
-
-@dispatch
-def _collate_elem(elem: torch.Tensor, batch: list):
-    return torch.stack(batch, 0)
-
-
-@dispatch
-def _collate_elem(elem: int, batch: list):
-    return torch.tensor(batch)
-
-
-@dispatch
-def _collate_elem(elem: float, batch: list):
-    return torch.tensor(batch)
-
-
-@dispatch
-def _collate_elem(elem: np.ndarray, batch: list):
-    return torch.from_numpy(np.stack(batch))
-
-
-@dispatch
-def _collate_elem(elem: object, batch: list):
-    """Fallback: 返回原始 batch."""
+def _collate_elem(elem, batch):
+    """根据元素类型选择 collate 策略."""
+    if isinstance(elem, DataContainer):
+        if batch[0].stack:
+            stacked = torch.stack([s.data for s in batch], dim=0)
+            return DataContainer(stacked, stack=batch[0].stack,
+                                 padding_value=batch[0].padding_value,
+                                 cpu_only=batch[0].cpu_only)
+        else:
+            return DataContainer([s.data for s in batch],
+                                 stack=False, cpu_only=batch[0].cpu_only)
+    if isinstance(elem, dict):
+        return {key: collate_fn([d[key] for d in batch]) for key in batch[0]}
+    if isinstance(elem, torch.Tensor):
+        return torch.stack(batch, 0)
+    if isinstance(elem, (int, float)):
+        return torch.tensor(batch)
+    if isinstance(elem, np.ndarray):
+        return torch.from_numpy(np.stack(batch))
+    # fallback
     return batch
 
 
@@ -131,39 +109,30 @@ def _to_cuda_if_tensor(d, device, non_blocking=False):
     return d.cuda(device, non_blocking=non_blocking) if hasattr(d, 'cuda') else d
 
 
-@dispatch
-def scatter_data(data: DataContainer, device=None, non_blocking=False):
+def scatter_data(data, device=None, non_blocking=False):
+    """递归将数据搬到 GPU, 处理 DataContainer / dict / list / tuple."""
     if device is None:
         device = torch.cuda.current_device()
-    if data.cpu_only:
-        return data.data
-    if data.stack:
-        return _to_cuda_if_tensor(data.data, device, non_blocking=non_blocking)
-    else:
-        return [_to_cuda_if_tensor(d, device, non_blocking=non_blocking) for d in data.data]
 
+    if isinstance(data, DataContainer):
+        if data.cpu_only:
+            return data.data
+        if data.stack:
+            return _to_cuda_if_tensor(data.data, device, non_blocking=non_blocking)
+        else:
+            return [_to_cuda_if_tensor(d, device, non_blocking=non_blocking) for d in data.data]
 
-@dispatch
-def scatter_data(data: dict, device=None, non_blocking=False):
-    return {k: scatter_data(v, device, non_blocking=non_blocking) for k, v in data.items()}
+    if isinstance(data, dict):
+        return {k: scatter_data(v, device, non_blocking=non_blocking) for k, v in data.items()}
 
+    if isinstance(data, list):
+        return [scatter_data(v, device, non_blocking=non_blocking) for v in data]
 
-@dispatch
-def scatter_data(data: list, device=None, non_blocking=False):
-    return [scatter_data(v, device, non_blocking=non_blocking) for v in data]
+    if isinstance(data, tuple):
+        return tuple(scatter_data(v, device, non_blocking=non_blocking) for v in data)
 
-
-@dispatch
-def scatter_data(data: tuple, device=None, non_blocking=False):
-    return tuple(scatter_data(v, device, non_blocking=non_blocking) for v in data)
-
-
-@dispatch
-def scatter_data(data: object, device=None, non_blocking=False):
-    """递归将数据搬到 GPU — fallback: 原样返回."""
+    # fallback: tensor or other
     if hasattr(data, 'cuda'):
-        if device is None:
-            device = torch.cuda.current_device()
         return data.cuda(device, non_blocking=non_blocking)
     return data
 

@@ -3,34 +3,17 @@
 import math
 import os
 from copy import deepcopy
-from typing import Optional
 
 import torch
-from pydantic import BaseModel, ConfigDict, field_validator
 
 from flashocc.core import load_state_dict
 from flashocc.core.dist import master_only
 from flashocc.core.log import logger
 from flashocc.core.hooks import HOOKS, Hook
+from flashocc.engine.hooks.utils import is_parallel as _is_parallel
 
-from .utils import is_parallel
 
 __all__ = ['ModelEMA']
-
-
-class EMAConfig(BaseModel):
-    """EMA 钩子配置."""
-    model_config = ConfigDict(extra="allow")
-    init_updates: int = 0
-    decay: float = 0.9990
-    resume: Optional[str] = None
-
-    @field_validator("decay")
-    @classmethod
-    def _decay_in_range(cls, v: float) -> float:
-        if not 0.0 < v < 1.0:
-            raise ValueError(f"decay 应在 (0, 1), 收到 {v}")
-        return v
 
 
 class ModelEMA:
@@ -56,7 +39,7 @@ class ModelEMA:
         """
         # Create EMA(FP32)
         self.ema_model = deepcopy(model).eval()
-        self.ema = self.ema_model.module.module if is_parallel(
+        self.ema = self.ema_model.module.module if _is_parallel(
             self.ema_model.module) else self.ema_model.module
         self.updates = updates
         # decay exponential ramp (to help early epochs)
@@ -70,7 +53,7 @@ class ModelEMA:
             self.updates += 1
             d = self.decay(self.updates)
 
-            msd = model.module.state_dict() if is_parallel(
+            msd = model.module.state_dict() if _is_parallel(
                 model) else model.state_dict()  # model state_dict
             for k, v in self.ema.state_dict().items():
                 if v.dtype.is_floating_point:
@@ -88,10 +71,10 @@ class MEGVIIEMAHook(Hook):
 
     def __init__(self, init_updates=0, decay=0.9990, resume=None):
         super().__init__()
-        cfg = EMAConfig(init_updates=init_updates, decay=decay, resume=resume)
-        self.init_updates = cfg.init_updates
-        self.resume = cfg.resume
-        self.decay = cfg.decay
+        assert 0.0 < decay < 1.0, f"decay 应在 (0, 1), 收到 {decay}"
+        self.init_updates = int(init_updates)
+        self.resume = resume
+        self.decay = float(decay)
 
     def before_run(self, runner):
         bn_model_list = list()

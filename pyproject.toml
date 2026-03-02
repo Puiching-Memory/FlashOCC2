@@ -26,7 +26,8 @@ dependencies = [
     "matplotlib>=3.8",
     "ultralytics-thop",
     "trackio",
-    "nvidia-ml-py"
+    "nvidia-ml-py",
+    "open3d"
 ]
 
 [build-system]

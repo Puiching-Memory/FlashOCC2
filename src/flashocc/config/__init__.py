@@ -10,4 +10,4 @@
 from .lazy import Lazy, Experiment, load_experiment
 from .types import DataConfig, GridConfig, BDAAugConfig
 
-__all__ = ["Lazy", "Experiment", "load_experiment"]
+__all__ = ["Lazy", "Experiment", "load_experiment", "DataConfig", "GridConfig", "BDAAugConfig"]

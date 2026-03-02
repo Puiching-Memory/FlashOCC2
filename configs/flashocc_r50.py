@@ -218,12 +218,12 @@ experiment = Experiment(
     freeze_modules=[],               # 例如: ["img_backbone", "img_neck"]
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
-    lr_scheduler=Lazy(MultiStepLR, milestones=[24], gamma=0.1),
+    lr_scheduler=Lazy(MultiStepLR, milestones=[34], gamma=0.1),
     warmup_iters=200,
     warmup_ratio=0.001,
     grad_max_norm=5.0,
 
-    max_epochs=24,
+    max_epochs=40,
     # load_from="ckpts/bevdet-r50-cbgs.pth", # 在此处的权重会覆盖所有其他权重
 
     checkpoint_interval=1,

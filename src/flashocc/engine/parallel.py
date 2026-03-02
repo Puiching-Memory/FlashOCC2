@@ -1,19 +1,10 @@
-"""并行 / 数据容器工具."""
+"""数据容器."""
 
 from __future__ import annotations
 
-import torch
-import torch.nn as nn
-from plum import dispatch
-
-
-# =====================================================================
-#  DataContainer
-# =====================================================================
-
 
 class DataContainer:
-    """数据容器, 为 DataParallel 提供 stack/cpu_only 等元信息."""
+    """数据容器, 为 collate/scatter 提供 stack/cpu_only 等元信息."""
 
     def __init__(self, data, stack: bool = False, padding_value: int = 0,
                  cpu_only: bool = False, pad_dims: int = 2):
@@ -54,62 +45,4 @@ class DataContainer:
         return len(self._data)
 
 
-# =====================================================================
-#  DataParallel
-# =====================================================================
-
-
-@dispatch
-def _unwrap(data: DataContainer):
-    """递归解包 DataContainer."""
-    return data.data
-
-
-@dispatch
-def _unwrap(data: dict):
-    return {k: _unwrap(v) for k, v in data.items()}
-
-
-@dispatch
-def _unwrap(data: list):
-    return [_unwrap(d) for d in data]
-
-
-@dispatch
-def _unwrap(data: tuple):
-    return tuple(_unwrap(d) for d in data)
-
-
-@dispatch
-def _unwrap(data: object):
-    """递归解包 DataContainer."""
-    return data
-
-
-class FlashDataParallel(nn.DataParallel):
-    """DataParallel, 自动解包 DataContainer."""
-
-    def train_step(self, *inputs, **kwargs):
-        return self.forward(*inputs, **kwargs)
-
-    def val_step(self, *inputs, **kwargs):
-        return self.forward(*inputs, **kwargs)
-
-    def scatter(self, inputs, kwargs, device_ids):
-        return super().scatter(_unwrap(inputs), _unwrap(kwargs), device_ids)
-
-
-class FlashDistributedDataParallel(nn.parallel.DistributedDataParallel):
-    """DistributedDataParallel."""
-
-    def train_step(self, *inputs, **kwargs):
-        return self.forward(*inputs, **kwargs)
-
-    def val_step(self, *inputs, **kwargs):
-        return self.forward(*inputs, **kwargs)
-
-
-__all__ = [
-    "DataContainer",
-    "FlashDataParallel", "FlashDistributedDataParallel",
-]
+__all__ = ["DataContainer"]

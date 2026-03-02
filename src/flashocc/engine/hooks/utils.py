@@ -1,8 +1,6 @@
-# Copyright (c) OpenMMLab. All rights reserved.
-
-__all__ = ['is_parallel']
+"""Hook 共享工具函数."""
 
 
 def is_parallel(model):
-    """check if model is in parallel mode."""
+    """判断模型是否被 DataParallel/DistributedDataParallel 包裹."""
     return hasattr(model, 'module') and hasattr(model, 'device_ids')

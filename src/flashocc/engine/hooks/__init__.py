@@ -1,7 +1,13 @@
 """训练钩子模块."""
 
-from .ema import *  # noqa: F401,F403
-from .syncbn_control import *  # noqa: F401,F403
-from .sequential_control import *  # noqa: F401,F403
+from .utils import is_parallel
+from .ema import ModelEMA, MEGVIIEMAHook
+from .syncbn_control import SyncbnControlHook
+from .sequential_control import SequentialControlHook
 
-__all__ = []
+__all__ = [
+    "is_parallel",
+    "ModelEMA", "MEGVIIEMAHook",
+    "SyncbnControlHook",
+    "SequentialControlHook",
+]

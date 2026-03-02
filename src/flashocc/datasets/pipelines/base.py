@@ -3,43 +3,20 @@
 import numpy as np
 import torch
 from PIL import Image
-from plum import dispatch
 
 
-@dispatch
-def to_tensor(data: torch.Tensor):
+def to_tensor(data):
     """将数据转换为 torch.Tensor."""
-    return data
-
-
-@dispatch
-def to_tensor(data: np.ndarray):
-    return torch.from_numpy(data)
-
-
-@dispatch
-def to_tensor(data: list):
-    return torch.tensor(data)
-
-
-@dispatch
-def to_tensor(data: tuple):
-    return torch.tensor(data)
-
-
-@dispatch
-def to_tensor(data: int):
-    return torch.LongTensor([data])
-
-
-@dispatch
-def to_tensor(data: float):
-    return torch.FloatTensor([data])
-
-
-@dispatch
-def to_tensor(data: object):
-    """将数据转换为 torch.Tensor."""
+    if isinstance(data, torch.Tensor):
+        return data
+    if isinstance(data, np.ndarray):
+        return torch.from_numpy(data)
+    if isinstance(data, (list, tuple)):
+        return torch.tensor(data)
+    if isinstance(data, int):
+        return torch.LongTensor([data])
+    if isinstance(data, float):
+        return torch.FloatTensor([data])
     raise TypeError(f"Cannot convert type {type(data)} to tensor")
 
 

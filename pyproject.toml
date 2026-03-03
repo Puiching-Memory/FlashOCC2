@@ -25,9 +25,8 @@ dependencies = [
     "plum-dispatch>=2.5",
     "matplotlib>=3.8",
     "ultralytics-thop",
-    "trackio",
-    "nvidia-ml-py",
-    "open3d"
+    "swanlab",
+    "transformers"
 ]
 
 [build-system]

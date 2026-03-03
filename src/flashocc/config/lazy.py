@@ -135,10 +135,10 @@ class Experiment(BaseModel):
     ema_init_updates: int = 0
     ema_resume: Optional[str] = None
 
-    # ---- 实验跟踪 (trackio) ----
-    trackio_project: Optional[str] = None  # 不为 None 即启用 trackio
-    trackio_group: Optional[str] = None
-    trackio_name: Optional[str] = None     # run 名称, None 时自动生成
+    # ---- 实验跟踪 (swanlab) ----
+    swanlab_project: Optional[str] = None  # 不为 None 即启用 swanlab
+    swanlab_group: Optional[str] = None
+    swanlab_name: Optional[str] = None     # run 名称, None 时自动生成
 
     # ---- 训练钩子 ----
     hooks: list[Lazy] = []

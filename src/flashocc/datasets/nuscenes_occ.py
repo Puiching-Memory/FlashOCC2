@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import os
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import flashocc
 import torch
 import cv2
@@ -9,12 +10,24 @@ from pyquaternion import Quaternion
 
 from flashocc.core.log import logger, progress_bar
 from flashocc.datasets import DATASETS
+from flashocc.constants import OCC_CLASS_NAMES
 from .nuscenes_bevdet import NuScenesDatasetBEVDet as NuScenesDataset
 from .evaluation.occ_metrics import Metric_mIoU, Metric_FScore
 from .evaluation.ray_metrics import main as calc_rayiou
 from torch.utils.data import DataLoader, Dataset
 from .evaluation.ray_metrics import main_raypq
 import glob
+
+
+# ---- 模块级函数: 供多进程池调用 (避免 pickle self) ----
+def _load_gt_worker(occ_path: str):
+    """在子进程中解压 GT npz 文件 (bypass GIL)."""
+    occ_gt = np.load(os.path.join(occ_path, 'labels.npz'))
+    return (
+        occ_gt['semantics'],
+        occ_gt['mask_lidar'].astype(bool),
+        occ_gt['mask_camera'].astype(bool),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -179,37 +192,64 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
                 eval_results.update(main_raypq(occ_preds, occ_gts, inst_preds, inst_gts, lidar_origins))
             # eval_results = main_raypq(occ_preds, occ_gts, inst_preds, inst_gts, lidar_origins)
         else:
-            self.occ_eval_metrics = Metric_mIoU(
-                num_classes=18,
-                use_lidar_mask=False,
-                use_image_mask=True)
+            num_classes = 18
+            use_lidar_mask = False
+            use_image_mask = True
 
             logger.info('Starting Evaluation...')
-
-            # ---- 预取 GT 文件 (npz 加载是主要瓶颈 ~38ms/个, 占 eval 93% 时间) ----
             num_samples = len(occ_results)
-            _PREFETCH_WORKERS = 8
 
-            def _load_gt(idx):
-                info = self.data_infos[idx]
-                occ_gt = np.load(os.path.join(info['occ_path'], 'labels.npz'))
-                return (
-                    occ_gt['semantics'],
-                    occ_gt['mask_lidar'].astype(bool),
-                    occ_gt['mask_camera'].astype(bool),
-                )
+            # ---- 直接累积混淆矩阵 (比 torchmetrics 快, 省去 tensor 转换) ----
+            confmat = np.zeros((num_classes, num_classes), dtype=np.int64)
 
-            with ThreadPoolExecutor(max_workers=_PREFETCH_WORKERS) as pool:
-                gt_futures = [pool.submit(_load_gt, i) for i in range(num_samples)]
+            # 收集 GT 路径供多进程加载
+            occ_paths = [self.data_infos[i]['occ_path'] for i in range(num_samples)]
 
-                for index, occ_pred in enumerate(progress_bar(occ_results, desc="Eval")):
-                    gt_semantics, mask_lidar, mask_camera = gt_futures[index].result()
-                    self.occ_eval_metrics.add_batch(
-                        occ_pred['pred_occ'] if (hasattr(occ_pred, 'keys') and 'pred_occ' in occ_pred) else occ_pred,
-                        gt_semantics,
-                        mask_lidar,
-                        mask_camera,
-                    )
+            # 多进程池: npz 解压是 CPU 密集, ThreadPool 受 GIL 限制;
+            # 用 forkserver 避免 fork CUDA 上下文.
+            n_workers = min(os.cpu_count() or 8, 32)
+            chunksize = max(1, num_samples // (n_workers * 4))
+            logger.info(f'GT loading: {n_workers} workers, chunksize={chunksize}')
+
+            mp_ctx = mp.get_context('forkserver')
+            with mp_ctx.Pool(processes=n_workers) as pool:
+                gt_iter = pool.imap(_load_gt_worker, occ_paths, chunksize=chunksize)
+
+                for index in progress_bar(range(num_samples), desc="Eval"):
+                    gt_semantics, mask_lidar, mask_camera = next(gt_iter)
+
+                    occ_pred = occ_results[index]
+                    pred = occ_pred['pred_occ'] if (hasattr(occ_pred, 'keys') and 'pred_occ' in occ_pred) else occ_pred
+
+                    # torch tensor -> numpy
+                    if hasattr(pred, 'cpu'):
+                        pred = pred.cpu().numpy()
+
+                    # 应用 mask
+                    if use_image_mask:
+                        masked_gt = gt_semantics[mask_camera]
+                        masked_pred = pred[mask_camera]
+                    elif use_lidar_mask:
+                        masked_gt = gt_semantics[mask_lidar]
+                        masked_pred = pred[mask_lidar]
+                    else:
+                        masked_gt = gt_semantics.ravel()
+                        masked_pred = pred.ravel()
+
+                    g = masked_gt.astype(np.int64).ravel()
+                    p = masked_pred.astype(np.int64).ravel()
+
+                    # 过滤无效值 (GT 中可能有 255 = unlabeled)
+                    valid = (g >= 0) & (g < num_classes) & (p >= 0) & (p < num_classes)
+                    if not valid.all():
+                        g = g[valid]
+                        p = p[valid]
+
+                    # bincount 直接累加混淆矩阵 (单次向量化操作, 极快)
+                    confmat += np.bincount(
+                        g * num_classes + p,
+                        minlength=num_classes * num_classes,
+                    ).reshape(num_classes, num_classes)
 
                     if show_dir is not None:
                         info = self.data_infos[index]
@@ -218,9 +258,32 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
                         sample_token = info['token']
                         flashocc.mkdir_or_exist(os.path.join(show_dir, scene_name, sample_token))
                         save_path = os.path.join(show_dir, scene_name, sample_token, 'pred.npz')
-                        np.savez_compressed(save_path, pred=occ_pred['pred_occ'] if (hasattr(occ_pred, 'keys') and 'pred_occ' in occ_pred) else occ_pred, gt=gt_semantics, sample_token=sample_token)
+                        np.savez_compressed(save_path, pred=pred, gt=gt_semantics, sample_token=sample_token)
 
-            eval_results = self.occ_eval_metrics.count_miou()
+            # ---- 从混淆矩阵计算 per-class IoU ----
+            tp = np.diag(confmat).astype(np.float64)
+            fp = confmat.sum(axis=0).astype(np.float64) - tp
+            fn = confmat.sum(axis=1).astype(np.float64) - tp
+            iou = tp / (tp + fp + fn + 1e-10)
+
+            class_names = list(OCC_CLASS_NAMES)
+            logger.info(f'===> per class IoU of {num_samples} samples:')
+            per_class = {}
+            for i in range(num_classes - 1):
+                iou_val = round(float(iou[i]) * 100, 2)
+                logger.info(f'===> {class_names[i]} - IoU = {iou_val}')
+                per_class[class_names[i]] = iou_val
+
+            mean_iou = float(np.nanmean(iou[:num_classes - 1]) * 100)
+            logger.info(f'===> mIoU of {num_samples} samples: {round(mean_iou, 2)}')
+
+            eval_results = {
+                'mIoU': iou,
+                'mIoU_mean': mean_iou,
+                'per_class_iou': per_class,
+                'num_samples': num_samples,
+                'confusion_matrix': confmat,
+            }
 
         return eval_results
 

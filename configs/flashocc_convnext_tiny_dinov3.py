@@ -99,17 +99,14 @@ model = Lazy(BEVDetOCC,
         sid=False,
         collapse_z=True,
         downsample=16,
-        init_cfg=PretrainedInit(checkpoint="ckpts/img_view_transformer.pth"),
     ),
     img_bev_encoder_backbone=Lazy(CustomResNet,
         numC_input=numC_Trans,
         num_channels=[numC_Trans * 2, numC_Trans * 4, numC_Trans * 8],
-        init_cfg=PretrainedInit(checkpoint="ckpts/img_bev_encoder_backbone.pth"),
     ),
     img_bev_encoder_neck=Lazy(FPN_LSS,
         in_channels=numC_Trans * 8 + numC_Trans * 2,
         out_channels=256,
-        init_cfg=PretrainedInit(checkpoint="ckpts/img_bev_encoder_neck.pth"),
     ),
     occ_head=Lazy(BEVOCCHead2D,
         in_dim=256,
@@ -214,16 +211,16 @@ experiment = Experiment(
     freeze_modules=["img_backbone"],  # 例如: ["img_backbone", "img_neck"]
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
-    lr_scheduler=Lazy(MultiStepLR, milestones=[34], gamma=0.1),
+    lr_scheduler=Lazy(MultiStepLR, milestones=[80, 90], gamma=0.1),
     warmup_iters=200,
     warmup_ratio=0.001,
     grad_max_norm=5.0,
 
-    max_epochs=40,
+    max_epochs=100,
     # load_from="ckpts/convnext_tiny_dinov3.pth",
 
     checkpoint_interval=1,
-    max_keep_ckpts=-1,
+    max_keep_ckpts=20,
 
     seed=0,
     cudnn_benchmark=True,
@@ -236,9 +233,9 @@ experiment = Experiment(
     ema_decay=0.9990,
     ema_init_updates=0,
 
-    # ---- 实验跟踪 (trackio) ----
-    trackio_project="flashocc2",
-    trackio_group="flashocc_convnext_tiny_dinov3",
+    # ---- 实验跟踪 (swanlab) ----
+    swanlab_project="flashocc2",
+    swanlab_group="flashocc_convnext_tiny_dinov3",
 
     use_amp=True,
     amp_dtype="bfloat16",

@@ -297,15 +297,15 @@ def train_model(experiment, model, mesh=None, validate=False,
             logger.info(f"恢复 EMA checkpoint: {ema_resume}")
         logger.info(f"启用 EMA, decay={ema_decay}")
 
-    # ---- trackio 实验跟踪 ----
-    trackio_run = None
-    if is_main_process and getattr(exp, 'trackio_project', None):
+    # ---- swanlab 实验跟踪 ----
+    swanlab_run = None
+    if is_main_process and getattr(exp, 'swanlab_project', None):
         try:
-            import trackio
-            trackio_run = trackio.init(
-                project=exp.trackio_project,
-                name=getattr(exp, 'trackio_name', None) or timestamp,
-                group=getattr(exp, 'trackio_group', None),
+            import swanlab
+            swanlab_run = swanlab.init(
+                project=exp.swanlab_project,
+                experiment_name=getattr(exp, 'swanlab_name', None) or timestamp,
+                group=getattr(exp, 'swanlab_group', None),
                 config={
                     "max_epochs": max_epochs,
                     "samples_per_gpu": exp.samples_per_gpu,
@@ -318,10 +318,10 @@ def train_model(experiment, model, mesh=None, validate=False,
                     "model": exp.model.cls.__name__,
                 },
             )
-            logger.info(f"启用 trackio 实验跟踪, project={exp.trackio_project}")
+            logger.info(f"启用 swanlab 实验跟踪, project={exp.swanlab_project}")
         except Exception as e:
-            logger.warning(f"trackio 初始化失败: {e}, 继续训练但不记录")
-            trackio_run = None
+            logger.warning(f"swanlab 初始化失败: {e}, 继续训练但不记录")
+            swanlab_run = None
 
     logger.info(f"开始训练, 共 {max_epochs} epochs, 工作目录: {work_dir}")
 
@@ -426,11 +426,9 @@ def train_model(experiment, model, mesh=None, validate=False,
                 "loss": f"{total_loss.item():.4f}",
             })
 
-            # ---- trackio: 记录每步 loss ----
-            if trackio_run is not None:
-                import trackio
-                trackio.log({"loss": total_loss.item(), "lr": lr, **loss_log},
-                            step=global_iter)
+            # ---- swanlab: 记录每步 loss ----
+            if swanlab_run is not None:
+                swanlab_run.log({"loss": total_loss.item(), "lr": lr, **loss_log}, step=global_iter)
 
         # epoch 结束 → LR step
         if lr_scheduler is not None:
@@ -461,12 +459,11 @@ def train_model(experiment, model, mesh=None, validate=False,
                     writer = csv.DictWriter(f, fieldnames=list(row.keys()))
                     writer.writerow(row)
 
-            # ---- trackio: 记录 epoch 级指标 ----
-            if trackio_run is not None:
-                import trackio
+            # ---- swanlab: 记录 epoch 级指标 ----
+            if swanlab_run is not None:
                 epoch_metrics = {"epoch": epoch + 1, "avg_loss": avg_loss}
                 epoch_metrics.update({f"avg_{k}": v for k, v in avg_detail.items()})
-                trackio.log(epoch_metrics, step=global_iter)
+                swanlab_run.log(epoch_metrics, step=global_iter)
 
         # 保存 checkpoint（仅主进程写盘，避免多 rank 竞争同一文件）
         if is_main_process:
@@ -510,11 +507,10 @@ def train_model(experiment, model, mesh=None, validate=False,
         if distributed and dist.is_available() and dist.is_initialized():
             dist.barrier()
 
-    # ---- trackio 结束 ----
-    if trackio_run is not None:
-        import trackio
-        trackio.finish()
-        logger.info("trackio 实验跟踪已结束")
+    # ---- swanlab 结束 ----
+    if swanlab_run is not None:
+        swanlab_run.finish()
+        logger.info("swanlab 实验跟踪已结束")
 
     logger.info("训练完成。")
 

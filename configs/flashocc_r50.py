@@ -218,16 +218,16 @@ experiment = Experiment(
     freeze_modules=[],               # 例如: ["img_backbone", "img_neck"]
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
-    lr_scheduler=Lazy(MultiStepLR, milestones=[34], gamma=0.1),
+    lr_scheduler=Lazy(MultiStepLR, milestones=[80, 90], gamma=0.1),
     warmup_iters=200,
     warmup_ratio=0.001,
     grad_max_norm=5.0,
 
-    max_epochs=40,
+    max_epochs=100,
     # load_from="ckpts/bevdet-r50-cbgs.pth", # 在此处的权重会覆盖所有其他权重
 
     checkpoint_interval=1,
-    max_keep_ckpts=-1,
+    max_keep_ckpts=20,
 
     seed=0,
     cudnn_benchmark=True,
@@ -240,9 +240,9 @@ experiment = Experiment(
     ema_decay=0.9990,
     ema_init_updates=0,
 
-    # ---- 实验跟踪 (trackio) ----
-    trackio_project="flashocc2",
-    trackio_group="flashocc_r50",
+    # ---- 实验跟踪 (swanlab) ----
+    swanlab_project="flashocc2",
+    swanlab_group="flashocc_r50",
 
     # ---- 性能优化 (profiling 结果指导) ----
     use_amp=True,                     # BF16 混合精度 — conv/BN 加速 ~2-3x

@@ -15,7 +15,7 @@ python tools/train.py configs/flashocc_r50.py
 torchrun --nproc_per_node=4 tools/train.py configs/flashocc_r50.py --launcher pytorch
 
 # 使用便捷脚本
-bash tools/dist_train.sh configs/flashocc_r50.py 4
+bash tools/dist_train.sh configs/flashocc_r50.py 8
 ```
 
 ### SLURM 集群训练

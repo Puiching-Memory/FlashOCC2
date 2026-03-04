@@ -144,6 +144,30 @@ img_bev_encoder (ResNet blocks)  →  增强 BEV 特征
 OccHead (Channel-to-Height)  →  3D 占用网格 (200×200×16, 18 类)
 ```
 
+### Sky Freespace 辅助监督 (可选)
+
+利用 SAM3 离线生成的天空掩码, 在 3D 体素空间施加 "已知空闲" 监督:
+
+```
+SAM3 天空掩码 (2D, per camera)
+    │
+    ▼
+沿视锥射线投影到 3D 体素 ── get_ego_coor() 将 (fH, fW) × D 个采样点映射到 ego 坐标
+    │
+    ▼
+天空射线穿过的 3D 体素 → 目标类别 = Free/Empty (class 17)
+    │
+    ▼
+辅助 Cross-Entropy Loss (loss_sky_freespace) ← 仅训练时, 不影响推理
+```
+
+关键设计: **不修改任何 2D 特征流** — 避免硬门控 (Hard Gating) 导致的:
+- 射线状伪影 (特征截断产生高频边界)
+- 梯度阻断 (天空区域 OCC 梯度消失)
+- 假阳性误杀 (SAM3 误判直接消灭目标特征)
+
+详见 [`doc/sky_freespace.md`](sky_freespace.md)。
+
 ## 常量定义
 
 全局常量集中在 `constants.py`：

@@ -3,22 +3,22 @@
 ## 单 GPU 测试
 
 ```bash
-python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth --eval occ
+python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth
 
 # 指定 CSV 输出路径
 python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth \
-  --eval occ --csv-out results/flashocc_r50_eval.csv
+  --csv-out results/flashocc_r50_eval.csv
 ```
 
 ## 目录批量评估（按顺序）
 
 ```bash
 # 当 checkpoint 传入目录时，会处理该目录下一级所有权重文件并按自然顺序（如 epoch_1, epoch_2, ..., epoch_24）评估
-python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50 --eval occ
+python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50
 
 # 可选：手动指定汇总 CSV 文件路径
 python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50 \
-  --eval occ --csv-out results/flashocc_r50_all_epochs.csv
+  --csv-out results/flashocc_r50_all_epochs.csv
 ```
 
 ## 多 GPU 测试
@@ -26,10 +26,10 @@ python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50 \
 ```bash
 torchrun --nproc_per_node=8 tools/test.py \
   configs/flashocc_r50.py work_dirs/flashocc_r50 \
-    --launcher pytorch --eval occ
+    --launcher pytorch
 
 # 使用便捷脚本
-bash tools/dist_test.sh configs/flashocc_r50.py work_dirs/flashocc_r50 8 --eval occ
+bash tools/dist_test.sh configs/flashocc_r50.py work_dirs/flashocc_r50 8
 ```
 
 ## 命令行参数
@@ -42,7 +42,6 @@ python tools/test.py <config> <checkpoint_or_dir> [options]
   checkpoint_or_dir      checkpoint 文件路径，或目录路径（目录下一级权重将按顺序批量评估）
 
 可选：
-  --eval METRICS         评估指标（如 occ）
   --csv-out PATH         保存评估汇总结果到 CSV 文件
   --gpu-id ID            GPU ID（单卡模式，默认: 0）
   --launcher {none,pytorch,slurm}  分布式启动器（默认: none）
@@ -52,7 +51,7 @@ python tools/test.py <config> <checkpoint_or_dir> [options]
 
 ```bash
 python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth \
-    --eval occ --csv-out results/flashocc_r50_eval.csv
+    --csv-out results/flashocc_r50_eval.csv
 ```
 
 ## 评估指标

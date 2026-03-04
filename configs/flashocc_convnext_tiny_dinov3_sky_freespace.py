@@ -1,6 +1,11 @@
-"""FlashOCC — ConvNeXt-Tiny (timm dinov3).
+"""FlashOCC — ConvNeXt-Tiny (timm dinov3) + Sky Freespace.
 
 基于 ConvNeXt Tiny backbone (timm: convnext_tiny.dinov3_lvd1689m)。
+引入 Sky Freespace 射线级 Free-Space 监督:
+  - 利用 SAM3 离线生成的天空二值掩码, 沿相机射线投影到 3D 体素空间
+  - 天空射线穿过的所有体素强制监督为 Free/Empty (class 17)
+  - 不修改任何 2D 特征 (无硬门控), 保持 LSS 梯度链路完整
+  - 推理时不依赖 SAM3, 不增加推理开销
 """
 from __future__ import annotations
 
@@ -10,7 +15,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 from flashocc.config import Lazy, Experiment, DataConfig, GridConfig, BDAAugConfig
 from flashocc.core.base_module import PretrainedInit
 
-# ------ 模型组件 (import 即安全) ------
+# ------ 模型组件 ------
 from flashocc.models.backbones.convnext import TimmConvNeXt
 from flashocc.models.backbones.resnet import CustomResNet
 from flashocc.models.necks.fpn import CustomFPN
@@ -26,6 +31,7 @@ from flashocc.datasets.pipelines.loading import (
     PrepareImageInputs,
     LoadAnnotationsBEVDepth,
     LoadOccGTFromFile,
+    LoadSkyMask,
     PointToMultiViewDepth,
 )
 from flashocc.datasets.pipelines._compat_pipelines import LoadPointsFromFile
@@ -33,7 +39,7 @@ from flashocc.datasets.pipelines.formatting import DefaultFormatBundle3D, Collec
 from flashocc.datasets.pipelines._compat_pipelines import MultiScaleFlipAug3D
 
 # =====================================================================
-#  场景参数 — dataclass, IDE 全程补全, 拼写错误即 TypeError
+#  场景参数
 # =====================================================================
 
 class_names = [
@@ -73,7 +79,15 @@ bda_aug_conf = BDAAugConfig(
 )
 
 # =====================================================================
-#  模型 — 组合式构建
+#  Sky Freespace 参数
+# =====================================================================
+
+SKY_MASK_ROOT = "data/SAM3"                 # SAM3 离线掩码目录
+SKY_FREESPACE_LOSS_WEIGHT = 1.0             # 射线级 Free-Space 辅助 Loss 权重
+VIEW_TRANSFORMER_DOWNSAMPLE = 16            # 与 LSSViewTransformer 的 downsample 一致
+
+# =====================================================================
+#  模型 — 组合式构建 (Sky Freespace, 无硬门控)
 # =====================================================================
 
 model = Lazy(BEVDetOCC,
@@ -98,7 +112,7 @@ model = Lazy(BEVDetOCC,
         out_channels=numC_Trans,
         sid=False,
         collapse_z=True,
-        downsample=16,
+        downsample=VIEW_TRANSFORMER_DOWNSAMPLE,
     ),
     img_bev_encoder_backbone=Lazy(CustomResNet,
         numC_input=numC_Trans,
@@ -122,10 +136,11 @@ model = Lazy(BEVDetOCC,
             loss_weight=1.0,
         ),
     ),
+    sky_freespace_loss_weight=SKY_FREESPACE_LOSS_WEIGHT,  # <-- 射线级 Free-Space Loss
 )
 
 # =====================================================================
-#  数据管线 — Lazy 包装每个 transform
+#  数据管线 — 增加 LoadSkyMask (仅 train)
 # =====================================================================
 
 train_pipeline = [
@@ -134,6 +149,10 @@ train_pipeline = [
     Lazy(LoadAnnotationsBEVDepth,
          bda_aug_conf=bda_aug_conf, classes=class_names, is_train=True),
     Lazy(LoadOccGTFromFile),
+    Lazy(LoadSkyMask,
+         sky_mask_root=SKY_MASK_ROOT,
+         downsample=VIEW_TRANSFORMER_DOWNSAMPLE,
+         input_size=data_config.input_size),
     Lazy(LoadPointsFromFile,
          coord_type="LIDAR", load_dim=5, use_dim=5),
     Lazy(PointToMultiViewDepth,
@@ -141,7 +160,7 @@ train_pipeline = [
     Lazy(DefaultFormatBundle3D, class_names=class_names),
     Lazy(Collect3D,
          keys=["img_inputs", "gt_depth", "voxel_semantics",
-               "mask_lidar", "mask_camera",
+               "mask_lidar", "mask_camera", "sky_mask",
                "jpeg_bytes", "img_aug_params"]),
 ]
 
@@ -192,7 +211,7 @@ val_data = Lazy(NuScenesDatasetOccpancy,
 )
 
 # =====================================================================
-#  实验 — 单一对象, 完整描述
+#  实验
 # =====================================================================
 
 experiment = Experiment(
@@ -208,7 +227,7 @@ experiment = Experiment(
     dataloader_drop_last=True,
     dataloader_non_blocking=True,
     image_color_order="RGB",
-    freeze_modules=["img_backbone"],  # 例如: ["img_backbone", "img_neck"] # DINOv3建议冻结backbone
+    freeze_modules=["img_backbone"],  # DINOv3建议冻结backbone
 
     optimizer=Lazy(AdamW, lr=1e-4, weight_decay=1e-2),
     lr_scheduler=Lazy(MultiStepLR, milestones=[80, 90], gamma=0.1),
@@ -235,12 +254,12 @@ experiment = Experiment(
 
     # ---- 实验跟踪 (swanlab) ----
     swanlab_project="flashocc2",
-    swanlab_group="flashocc_convnext_tiny_dinov3",
+    swanlab_group="flashocc_convnext_tiny_dinov3_sky_freespace",
 
     use_amp=True,
     amp_dtype="bfloat16",
     use_channels_last=True,
     use_compile=True,
     compile_backend="inductor",
-    compile_mode="default", # default | reduce-overhead | max-autotune | max-autotune-no-cudagraphs
+    compile_mode="default",
 )

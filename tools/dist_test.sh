@@ -3,6 +3,7 @@
 #
 # 用法:
 #   bash tools/dist_test.sh configs/flashocc_r50.py ckpts/epoch_24.pth 4
+#   bash tools/dist_test.sh configs/flashocc_r50.py work_dirs/flashocc_r50 8
 
 CONFIG=$1
 CHECKPOINT=$2

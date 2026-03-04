@@ -2,8 +2,8 @@
 """FlashOCC 测试脚本.
 
 用法:
-    python tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth --eval occ
-    torchrun --nproc_per_node=4 tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth --eval occ
+    python tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth
+    torchrun --nproc_per_node=4 tools/test.py configs/flashocc_r50.py ckpts/epoch_24.pth
 
 性能优化参数 (AMP / channels_last / torch.compile / cudnn.benchmark / TF32)
 自动从配置文件的 Experiment 对象中读取, 无需额外命令行参数。
@@ -43,7 +43,6 @@ def parse_args():
         "--csv-out",
         help="评估结果 CSV 输出路径（默认: 单文件写到权重同目录，多文件写到输入目录）",
     )
-    parser.add_argument("--eval", nargs="+", help="评估指标")
     parser.add_argument("--show", action="store_true")
     parser.add_argument("--show-dir")
     parser.add_argument("--gpu-id", type=int, default=0)
@@ -373,8 +372,8 @@ def main():
                     "checkpoint": checkpoint_path,
                     "checkpoint_name": os.path.basename(checkpoint_path),
                 }
-                if args.eval and hasattr(dataset, "evaluate"):
-                    eval_kwargs = {"metric": args.eval}
+                if hasattr(dataset, "evaluate"):
+                    eval_kwargs = {"metric": ["occ"]}
                     metrics = dataset.evaluate(results, **eval_kwargs)
                     for k, v in metrics.items():
                         if k == 'per_class_iou':

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from collections import OrderedDict
 from typing import Any
@@ -67,9 +68,29 @@ from flashocc.core import load_checkpoint
 from flashocc.constants import OCC_CLASS_NAMES, POINT_CLOUD_RANGE, VOXEL_SIZE
 from flashocc.engine.trainer import build_dataloader
 
+# ── 新的统一 3D 可视化引擎 ──────────────────────────────────────────
+from flashocc.vis import (
+    OccGrid,
+    OccVoxelRenderer,
+    OCC_CLASS_COLORS,
+    COLOR_LUT as _COLOR_LUT,
+    cls_to_rgb as _cls_to_rgb,
+    build_class_legend,
+    build_cam_legend_patches,
+    CameraParams,
+    CAM_ORDER as _CAM_ORDER,
+    CAM_INFO as _CAM_INFO,
+    ZOE_LENGTH as _ZOE_LENGTH,
+    ZOE_WIDTH as _ZOE_WIDTH,
+    ZOE_WHEELBASE as _ZOE_WB,
+    draw_ego_vehicle as _draw_ego_vehicle_vis,
+    draw_camera_fovs as _draw_camera_fovs_vis,
+    add_bev_annotations as _add_bev_annotations_vis,
+)
+
 
 # =====================================================================
-#  全局常量
+#  全局常量 — 从 constants / vis 统一引用, 不再重复定义
 # =====================================================================
 
 _PCR = POINT_CLOUD_RANGE    # [-40, -40, -1, 40, 40, 5.4]
@@ -80,56 +101,8 @@ _DX = int((_PCR[3] - _PCR[0]) / _VS)  # 200
 _DY = int((_PCR[4] - _PCR[1]) / _VS)  # 200
 _DZ = int((_PCR[5] - _PCR[2]) / _VS)  # 16
 
-# 雷诺 Zoé 尺寸 (m)
-_ZOE_LENGTH = 4.084   # 车身总长 (x方向 ±2.042m)
-_ZOE_WIDTH  = 1.730   # 车身总宽 (y方向 ±0.865m)
-_ZOE_WB     = 2.588   # 轴距
-
-# NuScenes 6相机布局
-# 角度约定: 从+x轴(前方)逆时针为正 (+y=左=正角度)
-_CAM_ORDER = ["CAM_FRONT_LEFT", "CAM_FRONT", "CAM_FRONT_RIGHT",
-              "CAM_BACK_LEFT",  "CAM_BACK",  "CAM_BACK_RIGHT"]
-
-_CAM_INFO = {
-    "CAM_FRONT_LEFT":  dict(heading=+55.0,  hfov=70.0,  range_m=50.0, color="#FF6B6B"),
-    "CAM_FRONT":       dict(heading=  0.0,  hfov=70.0,  range_m=50.0, color="#FFD93D"),
-    "CAM_FRONT_RIGHT": dict(heading=-55.0,  hfov=70.0,  range_m=50.0, color="#6BCB77"),
-    "CAM_BACK_LEFT":   dict(heading=+110.0, hfov=70.0,  range_m=50.0, color="#4D96FF"),
-    "CAM_BACK":        dict(heading= 180.0, hfov=110.0, range_m=50.0, color="#C77DFF"),
-    "CAM_BACK_RIGHT":  dict(heading=-110.0, hfov=70.0,  range_m=50.0, color="#FF9F1C"),
-}
-
-# OCC 18类颜色表 (RGB 0-1)
-OCC_CLASS_COLORS: dict[int, tuple] = {
-    0:  (0.00, 0.00, 0.00),  # others
-    1:  (1.00, 0.73, 0.47),  # barrier
-    2:  (1.00, 0.83, 0.00),  # bicycle
-    3:  (0.00, 0.00, 0.90),  # bus
-    4:  (1.00, 0.00, 0.00),  # car
-    5:  (0.55, 0.27, 0.07),  # construction_vehicle
-    6:  (0.00, 0.00, 0.55),  # motorcycle
-    7:  (0.00, 0.75, 1.00),  # pedestrian
-    8:  (1.00, 0.40, 0.00),  # traffic_cone
-    9:  (0.50, 0.00, 0.50),  # trailer
-    10: (0.65, 0.16, 0.16),  # truck
-    11: (0.60, 0.60, 0.60),  # driveable_surface
-    12: (0.75, 0.75, 0.75),  # other_flat
-    13: (0.85, 0.55, 0.85),  # sidewalk
-    14: (0.40, 0.70, 0.40),  # terrain
-    15: (0.70, 0.70, 0.90),  # manmade
-    16: (0.13, 0.55, 0.13),  # vegetation
-    17: (1.00, 1.00, 1.00),  # free
-}
-
-
-def _build_color_lut() -> np.ndarray:
-    lut = np.full((256, 3), 0.5)
-    for cls_id, rgb in OCC_CLASS_COLORS.items():
-        if cls_id < 256:
-            lut[cls_id] = rgb
-    return lut
-
-_COLOR_LUT = _build_color_lut()
+# 默认 OccGrid 实例工厂 (用于 BEV 辅助绘制的坐标变换)
+_DEFAULT_GRID = OccGrid(voxels=np.zeros((1, 1, 1), dtype=np.uint8))
 
 # 输入图像在 img_inputs 中的通道顺序 (由配置 experiment.image_color_order 控制)
 # 可视化时统一转换为 RGB 再显示
@@ -137,7 +110,7 @@ _VIS_INPUT_COLOR_ORDER = "RGB"
 
 
 # =====================================================================
-#  BEV坐标系约定
+#  BEV坐标系约定 — 现在由 flashocc.vis.OccGrid 封装
 #
 #  occ_pred[i, j, k]  →  世界坐标:
 #    x = _PCR[0] + i * _VS = -40 + i * 0.4   (前后, i↑=前方↑)
@@ -152,101 +125,99 @@ _VIS_INPUT_COLOR_ORDER = "RGB"
 # =====================================================================
 
 def world_to_bev_px(x: float, y: float):
-    """世界坐标(x,y) → BEV像素(col=j, row=i)."""
-    return (y - _PCR[1]) / _VS, (x - _PCR[0]) / _VS   # col, row
+    """世界坐标(x,y) → BEV像素(col=j, row=i). (兼容旧代码, 委托给 OccGrid)"""
+    return _DEFAULT_GRID.world_to_bev_px(x, y)
 
 
 def draw_ego_vehicle(ax, linewidth=2.0, color="#1E90FF", zorder=10):
-    """绘制雷诺Zoé自车轮廓 + 前进方向箭头."""
-    cx, cr = world_to_bev_px(0, 0)
-    corners_w = [
-        (-_ZOE_LENGTH/2, -_ZOE_WIDTH/2),
-        (+_ZOE_LENGTH/2, -_ZOE_WIDTH/2),
-        (+_ZOE_LENGTH/2, +_ZOE_WIDTH/2),
-        (-_ZOE_LENGTH/2, +_ZOE_WIDTH/2),
-        (-_ZOE_LENGTH/2, -_ZOE_WIDTH/2),
-    ]
-    cols = [(y - _PCR[1]) / _VS for (x, y) in corners_w]
-    rows = [(x - _PCR[0]) / _VS for (x, y) in corners_w]
-    ax.fill(cols, rows, color=color, alpha=0.30, zorder=zorder)
-    ax.plot(cols, rows, color=color, linewidth=linewidth, zorder=zorder)
-    # 前进方向箭头 (+x = 向上 in BEV)
-    arrow_end = cr + (_ZOE_LENGTH / 2 + 2.5) / _VS
-    ax.annotate("", xy=(cx, arrow_end), xytext=(cx, cr),
-                arrowprops=dict(arrowstyle="->", color=color, lw=2.0),
-                zorder=zorder + 1)
-    # 轴距虚线
-    wb_px = _ZOE_WB / _VS
-    ax.plot([cx, cx], [cr - wb_px/2, cr + wb_px/2],
-            color=color, linewidth=1.0, linestyle=":", alpha=0.7, zorder=zorder)
-    # 车型标注
-    ax.text(cx + 2, cr, "Renault Zoé\n4.08m×1.73m",
-            fontsize=6, color=color, va="center",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color,
-                      alpha=0.75, linewidth=0.5))
+    """绘制雷诺Zoé自车轮廓. (兼容旧代码, 委托给 vis.bev_helpers)"""
+    _draw_ego_vehicle_vis(ax, _DEFAULT_GRID, linewidth=linewidth,
+                          color=color, zorder=zorder)
 
 
 def draw_camera_fovs(ax, alpha_fill=0.07, alpha_line=0.65, zorder=5):
-    """绘制6相机视场角扇形辅助线."""
-    ego_col, ego_row = world_to_bev_px(0, 0)
-    legend_patches = []
-
-    for cam_name in _CAM_ORDER:
-        info = _CAM_INFO[cam_name]
-        heading_rad  = np.radians(info["heading"])
-        half_fov_rad = np.radians(info["hfov"] / 2.0)
-        color = info["color"]
-
-        n_pts = 40
-        angles = np.linspace(heading_rad - half_fov_rad,
-                             heading_rad + half_fov_rad, n_pts)
-        wx = np.cos(angles) * info["range_m"]
-        wy = np.sin(angles) * info["range_m"]
-        arc_cols = (wy - _PCR[1]) / _VS
-        arc_rows = (wx - _PCR[0]) / _VS
-
-        fan_cols = np.concatenate([[ego_col], arc_cols, [ego_col]])
-        fan_rows = np.concatenate([[ego_row], arc_rows, [ego_row]])
-
-        ax.fill(fan_cols, fan_rows, color=color, alpha=alpha_fill, zorder=zorder)
-        ax.plot(fan_cols, fan_rows, color=color, linewidth=1.0,
-                alpha=alpha_line, zorder=zorder)
-
-        # 相机名标签 (6成处)
-        f_col = arc_cols[n_pts//2] * 0.6 + ego_col * 0.4
-        f_row = arc_rows[n_pts//2] * 0.6 + ego_row * 0.4
-        short = cam_name.replace("CAM_", "").replace("_", "\n")
-        ax.text(f_col, f_row, short, fontsize=5.5, ha="center", va="center",
-                color=color, fontweight="bold", zorder=zorder + 1,
-                bbox=dict(boxstyle="round,pad=0.1", fc="white", ec=color,
-                          alpha=0.75, linewidth=0.5))
-        legend_patches.append(
-            Patch(facecolor=color, alpha=0.6, edgecolor=color,
-                  label=f"{cam_name.replace('CAM_','').replace('_',' ')} "
-                        f"(hdg={info['heading']:+.0f}°, HFoV={info['hfov']:.0f}°)"))
-
-    return legend_patches
+    """绘制6相机视场角扇形辅助线. (兼容旧代码, 委托给 vis.bev_helpers)"""
+    return _draw_camera_fovs_vis(ax, _DEFAULT_GRID, alpha_fill=alpha_fill,
+                                 alpha_line=alpha_line, zorder=zorder)
 
 
 def add_bev_annotations(ax, title="", fontsize=13, tick_m=10.0):
-    """BEV轴: 刻度、网格、方位文字."""
-    ticks_m = np.arange(-40, 41, tick_m)
-    ax.set_xticks([(t - _PCR[1]) / _VS for t in ticks_m])
-    ax.set_xticklabels([f"{int(t)}" for t in ticks_m], fontsize=6)
-    ax.set_yticks([(t - _PCR[0]) / _VS for t in ticks_m])
-    ax.set_yticklabels([f"{int(t)}" for t in ticks_m], fontsize=6)
-    ax.set_xlabel("Y / m  (right ← | → left )", fontsize=8)
-    ax.set_ylabel("X / m  (rear  ↓ | ↑  front)", fontsize=8)
-    for t in np.arange(-40, 41, tick_m):
-        ax.axvline((t - _PCR[1]) / _VS, color="gray", lw=0.3, alpha=0.4)
-        ax.axhline((t - _PCR[0]) / _VS, color="gray", lw=0.3, alpha=0.4)
-    cx, cy = world_to_bev_px(0, 0)
-    kw = dict(ha="center", fontsize=7, color="white", fontweight="bold",
-              bbox=dict(boxstyle="round,pad=0.2", fc="#333", alpha=0.7))
-    ax.text(cx, _DX - 2, "FRONT ▲", va="top",   **kw)
-    ax.text(cx,        2, "REAR  ▼", va="bottom", **kw)
-    if title:
-        ax.set_title(title, fontsize=fontsize, fontweight="bold", pad=8)
+    """BEV轴标注. (兼容旧代码, 委托给 vis.bev_helpers)"""
+    _add_bev_annotations_vis(ax, _DEFAULT_GRID, title=title,
+                              fontsize=fontsize, tick_m=tick_m)
+
+
+# =====================================================================
+#  公共辅助函数 — 减少可视化代码重复
+# =====================================================================
+
+# 6 相机 2×3 网格布局 (cam_name, row, col)
+_CAM_GRID = [
+    ("CAM_FRONT_LEFT",  0, 0),
+    ("CAM_FRONT",       0, 1),
+    ("CAM_FRONT_RIGHT", 0, 2),
+    ("CAM_BACK_LEFT",   1, 0),
+    ("CAM_BACK",        1, 1),
+    ("CAM_BACK_RIGHT",  1, 2),
+]
+
+
+def _short_cam(name: str) -> str:
+    """'CAM_FRONT_LEFT' → 'FRONT_LEFT'."""
+    return name.replace("CAM_", "")
+
+
+def _cam_xticklabels(n_cams: int = 6) -> list[str]:
+    """每相机柱状图的 x 轴标签."""
+    return [_short_cam(c).replace("_", "\n") for c in _CAM_ORDER[:n_cams]]
+
+
+def _save_figure(fig, path: str, dpi: int = 150, facecolor=None):
+    """保存图表 → 关闭 → 打印路径."""
+    kw: dict = {"dpi": dpi, "bbox_inches": "tight"}
+    if facecolor is not None:
+        kw["facecolor"] = facecolor
+    plt.savefig(path, **kw)
+    plt.close(fig)
+    print(f"  → 已保存: {path}")
+
+
+def _gt_unavailable(ax, title: str, fontsize: int = 14, text_fontsize: int = 16):
+    """GT 不可用时的占位面板."""
+    ax.axis("off")
+    ax.text(0.5, 0.5, "Ground Truth\nUnavailable",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=text_fontsize, fontweight="bold", color="gray")
+    ax.set_title(title, fontsize=fontsize, fontweight="bold")
+
+
+def _make_cls_patches(*occ_arrays, with_counts: bool = False,
+                      count_src: np.ndarray | None = None) -> list[Patch]:
+    """根据 OCC 数组收集所有非 free/others 类别, 生成图例色块."""
+    all_cls: set[int] = set()
+    for occ in occ_arrays:
+        if occ is not None:
+            all_cls |= set(int(c) for c in occ[(occ != 17) & (occ != 0)])
+    patches = []
+    for c in sorted(all_cls):
+        label = OCC_CLASS_NAMES[c] if c < len(OCC_CLASS_NAMES) else f"cls{c}"
+        if with_counts and count_src is not None:
+            label += f" ({(count_src == c).sum():,})"
+        patches.append(Patch(
+            facecolor=OCC_CLASS_COLORS.get(c, (0.5, 0.5, 0.5)),
+            edgecolor="k", lw=0.4, label=label))
+    return patches
+
+
+def _cam_bar(ax, values, title: str, ylabel: str,
+             n_cams: int = 6, fontsize_ticks: int = 7, **bar_kw):
+    """通用的每相机柱状图 (自动着色 + x 轴标签)."""
+    cam_colors = [_CAM_INFO[c]["color"] for c in _CAM_ORDER[:n_cams]]
+    ax.bar(range(n_cams), values, color=cam_colors, alpha=0.85, **bar_kw)
+    ax.set_xticks(range(n_cams))
+    ax.set_xticklabels(_cam_xticklabels(n_cams), fontsize=fontsize_ticks)
+    ax.set_title(title, fontsize=9)
+    ax.set_ylabel(ylabel, fontsize=8)
 
 
 # =====================================================================
@@ -370,7 +341,7 @@ def visualize_multicam_features(feat: torch.Tensor, title: str, save_path: str,
         cam_name = _CAM_ORDER[idx]
         info = _CAM_INFO[cam_name]
         ax.set_title(
-            f"{cam_name.replace('CAM_','')}\n"
+            f"{_short_cam(cam_name)}\n"
             f"heading={info['heading']:+.0f}°  HFoV={info['hfov']:.0f}°",
             fontsize=9, fontweight="bold", color=cam_colors[idx])
         ax.tick_params(labelsize=6)
@@ -389,14 +360,9 @@ def visualize_multicam_features(feat: torch.Tensor, title: str, save_path: str,
     std_per_cam  = feat_f.std(dim=(1,2,3)).numpy()
 
     ax_bar = fig.add_subplot(gs_stats[0, 0])
-    ax_bar.bar(range(n_cams), mean_per_cam, color=cam_colors, alpha=0.85,
-               yerr=std_per_cam, capsize=5, ecolor="gray")
-    ax_bar.set_xticks(range(n_cams))
-    ax_bar.set_xticklabels(
-        [c.replace("CAM_","").replace("_","\n") for c in _CAM_ORDER],
-        fontsize=8)
-    ax_bar.set_title("Per-Camera Mean Activation ± Std", fontsize=9)
-    ax_bar.set_ylabel("Channel Mean", fontsize=8)
+    _cam_bar(ax_bar, mean_per_cam, "Per-Camera Mean Activation ± Std",
+            "Channel Mean", n_cams=n_cams, fontsize_ticks=8,
+            yerr=std_per_cam, capsize=5, ecolor="gray")
     _ylo = float((mean_per_cam - std_per_cam).min())
     _yhi = float((mean_per_cam + std_per_cam).max())
     _ym  = max((_yhi - _ylo) * 0.12, 1e-6)
@@ -417,7 +383,7 @@ def visualize_multicam_features(feat: torch.Tensor, title: str, save_path: str,
         v = feat_f[idx].numpy().flatten()
         hist_values.append(v)
         ax_hist.hist(v, bins=60, alpha=0.38, color=cam_colors[idx],
-                     label=_CAM_ORDER[idx].replace("CAM_",""),
+                     label=_short_cam(_CAM_ORDER[idx]),
                      density=True, histtype="stepfilled")
     ax_hist.set_title("Activation Distribution (6 cameras overlay)", fontsize=9)
     ax_hist.set_xlabel("value"); ax_hist.legend(fontsize=6, ncol=2)
@@ -477,9 +443,7 @@ def visualize_multicam_features(feat: torch.Tensor, title: str, save_path: str,
                  bbox=dict(boxstyle="round", fc="lightyellow",
                            ec="gray", alpha=0.8))
 
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path)
 
 
 # =====================================================================
@@ -576,7 +540,7 @@ def visualize_lss_depth_2d(
                        vmin=d_min, vmax=d_max)
         plt.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="depth (m)")
         cam_name = _CAM_ORDER[idx]
-        ax.set_title(f"{cam_name.replace('CAM_','')} — E[depth]",
+        ax.set_title(f"{_short_cam(cam_name)} — E[depth]",
                      fontsize=9, fontweight="bold", color=cam_colors[idx])
         ax.axis("off")
 
@@ -596,7 +560,7 @@ def visualize_lss_depth_2d(
         plt.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="prob")
         ax.set_xlabel("fW pixel", fontsize=8)
         ax.set_ylabel("depth (m)", fontsize=8)
-        ax.set_title(f"{cam_name.replace('CAM_','')} — depth dist (row={mid_h})",
+        ax.set_title(f"{_short_cam(cam_name)} — depth dist (row={mid_h})",
                      fontsize=9, fontweight="bold", color=cam_colors[idx])
 
         # 叠加 argmax 线
@@ -608,23 +572,15 @@ def visualize_lss_depth_2d(
     # ---- Row 2: 全局统计 ----
     ax_s = fig.add_subplot(gs_stats[0, 0])
     mean_depths = [float(expected_depth[i].mean()) for i in range(n_cams)]
-    ax_s.bar(range(n_cams), mean_depths, color=cam_colors, alpha=0.85)
-    ax_s.set_xticks(range(n_cams))
-    ax_s.set_xticklabels(
-        [c.replace("CAM_","").replace("_","\n") for c in _CAM_ORDER], fontsize=7)
-    ax_s.set_title("Mean Expected Depth per Camera", fontsize=9)
-    ax_s.set_ylabel("depth (m)", fontsize=8)
+    _cam_bar(ax_s, mean_depths, "Mean Expected Depth per Camera", "depth (m)",
+            n_cams=n_cams)
 
     ax_e = fig.add_subplot(gs_stats[0, 1])
     # 深度分布的熵: H = -sum(p * log(p+eps))
     eps = 1e-8
     entropy = -(depth_np * np.log(depth_np + eps)).sum(axis=1).mean(axis=(1, 2))  # (N,)
-    ax_e.bar(range(n_cams), entropy, color=cam_colors, alpha=0.85)
-    ax_e.set_xticks(range(n_cams))
-    ax_e.set_xticklabels(
-        [c.replace("CAM_","").replace("_","\n") for c in _CAM_ORDER], fontsize=7)
-    ax_e.set_title("Mean Depth Entropy per Camera", fontsize=9)
-    ax_e.set_ylabel("entropy (nats)", fontsize=8)
+    _cam_bar(ax_e, entropy, "Mean Depth Entropy per Camera", "entropy (nats)",
+            n_cams=n_cams)
 
     ax_i = fig.add_subplot(gs_stats[0, 2])
     ax_i.axis("off")
@@ -642,9 +598,7 @@ def visualize_lss_depth_2d(
               fontfamily="monospace",
               bbox=dict(boxstyle="round", fc="lightyellow", ec="gray", alpha=0.8))
 
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path)
 
 
 def visualize_lss_depth_3d_perspective(
@@ -672,64 +626,13 @@ def visualize_lss_depth_3d_perspective(
         title: 标题
     """
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-    from matplotlib.colors import to_rgba
 
-    # ------ 数据准备 ------
-    depth_np = depth.float().numpy()[:n_cams]  # (N, D, fH, fW)
-    D, fH, fW = depth_np.shape[1], depth_np.shape[2], depth_np.shape[3]
-    bins = _make_depth_bins(depth_cfg)  # (D,)
-
-    # 期望深度 E[d] per pixel per camera
-    expected_depth = (depth_np * bins[None, :, None, None]).sum(axis=1)  # (N, fH, fW)
-
-    # ------ 相机参数 ------
-    cam_params = _extract_cam_params_from_img_inputs(img_inputs)
-    if cam_params is None:
+    # ------ 反投影到 ego 空间 (复用 _backproject_lss_to_ego) ------
+    all_ego_pts = _backproject_lss_to_ego(
+        depth, img_inputs, depth_cfg, n_cams, input_size)
+    if not all_ego_pts:
         print("  [跳过] LSS depth 3D: 无法提取相机参数")
         return
-    sensor2keyegos = cam_params["sensor2keyegos"]  # (N, 4, 4)
-    intrins = cam_params["intrins"]                # (N, 3, 3)
-    post_rots = cam_params["post_rots"]            # (N, 3, 3)
-    post_trans = cam_params["post_trans"]           # (N, 3)
-
-    H_in, W_in = input_size
-
-    # 构建特征像素网格 (与模型 create_frustum 一致)
-    u_grid = np.linspace(0, W_in - 1, fW, dtype=np.float32)
-    v_grid = np.linspace(0, H_in - 1, fH, dtype=np.float32)
-    uu, vv = np.meshgrid(u_grid, v_grid)  # (fH, fW) each
-    ones_hw = np.ones((fH, fW), dtype=np.float32)
-    aug_pts = np.stack([uu, vv, ones_hw], axis=-1).reshape(-1, 3)  # (fH*fW, 3)
-
-    # ------ 反投影到 ego 空间 ------
-    all_ego_pts: list[np.ndarray] = []   # per-camera ego points
-    all_colors: list[str] = []
-
-    for cam_idx in range(n_cams):
-        cam_name = _CAM_ORDER[cam_idx]
-        ed = expected_depth[cam_idx].flatten()  # (fH*fW,)
-
-        K = intrins[cam_idx]           # (3, 3)
-        post_rot = post_rots[cam_idx]  # (3, 3)
-        post_tran = post_trans[cam_idx]  # (3,)
-        s2ke = sensor2keyegos[cam_idx]   # (4, 4)
-
-        # 1. 撤销 post augmentation: p_orig = inv(post_rot) @ (p_aug - post_trans)
-        inv_post_rot = np.linalg.inv(post_rot)
-        deaug = (aug_pts - post_tran[None, :]) @ inv_post_rot.T  # (M, 3)
-
-        # 2. 乘以深度: [u'*d, v'*d, d]
-        uvd = np.stack([deaug[:, 0] * ed, deaug[:, 1] * ed, ed], axis=-1)  # (M, 3)
-
-        # 3. combine = R_sensor2keyego @ K^{-1},  p_ego = combine @ uvd + t
-        K_inv = np.linalg.inv(K)
-        R_c2e = s2ke[:3, :3]
-        t_c2e = s2ke[:3, 3]
-        combine = R_c2e @ K_inv  # (3, 3)
-        p_ego = uvd @ combine.T + t_c2e[None, :]  # (M, 3)
-
-        all_ego_pts.append(p_ego)
-        all_colors.append(_CAM_INFO[cam_name]["color"])
 
     # ------ 绘图 ------
     bg_color = "#0d1117"
@@ -739,11 +642,11 @@ def visualize_lss_depth_3d_perspective(
     for cam_idx in range(n_cams):
         cam_name = _CAM_ORDER[cam_idx]
         pts = all_ego_pts[cam_idx]
-        color = all_colors[cam_idx]
+        color = _CAM_INFO[cam_name]["color"]
         ax.scatter(
             pts[:, 0], pts[:, 1], pts[:, 2],
             c=color, s=3.0, alpha=0.7,
-            label=cam_name.replace("CAM_", ""),
+            label=_short_cam(cam_name),
             depthshade=False, rasterized=True,
         )
 
@@ -791,10 +694,691 @@ def visualize_lss_depth_3d_perspective(
     for text in leg.get_texts():
         text.set_color("white")
 
-    plt.savefig(save_path, dpi=150, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path, facecolor=fig.get_facecolor())
+
+
+# =====================================================================
+#  (1c) LSS 预测点云 vs LiDAR 真值点云对比可视化
+# =====================================================================
+
+def _load_lidar_points_ego(dataset, sample_idx: int) -> np.ndarray | None:
+    """从 dataset.data_infos 加载 LiDAR 点云并变换到 key ego 坐标系.
+
+    Returns:
+        (N, 3) np.ndarray  ego坐标系下的点云, 或 None.
+    """
+    from pyquaternion import Quaternion as Quat
+    try:
+        infos = getattr(dataset, "data_infos", None)
+        if infos is None or sample_idx >= len(infos):
+            return None
+        info = infos[sample_idx]
+
+        # 1. 加载原始点云
+        lidar_path = info.get("lidar_path", "")
+        if not lidar_path or not os.path.isfile(lidar_path):
+            return None
+        pts = np.fromfile(lidar_path, dtype=np.float32).reshape(-1, 5)[:, :3]  # (N, 3)
+
+        # 2. lidar → ego
+        lidar2ego = np.eye(4, dtype=np.float64)
+        lidar2ego[:3, :3] = Quat(info["lidar2ego_rotation"]).rotation_matrix
+        lidar2ego[:3, 3] = np.array(info["lidar2ego_translation"])
+
+        # 3. ego → global
+        ego2global = np.eye(4, dtype=np.float64)
+        ego2global[:3, :3] = Quat(info["ego2global_rotation"]).rotation_matrix
+        ego2global[:3, 3] = np.array(info["ego2global_translation"])
+
+        # lidar → global
+        lidar2global = ego2global @ lidar2ego
+
+        # 最终结果就是 ego 坐标系 (key ego = lidar ego 在单帧中相同)
+        # 变换: p_ego = lidar2ego @ p_lidar
+        pts_h = np.concatenate([pts, np.ones((pts.shape[0], 1), dtype=np.float64)], axis=1)  # (N, 4)
+        pts_ego = (lidar2ego @ pts_h.T).T[:, :3]  # (N, 3)
+        return pts_ego.astype(np.float32)
+    except Exception as e:
+        print(f"  [加载LiDAR失败] {e}")
+        return None
+
+
+def _backproject_lss_to_ego(
+    depth: torch.Tensor,
+    img_inputs: tuple,
+    depth_cfg: tuple = (1.0, 45.0, 0.5),
+    n_cams: int = 6,
+    input_size: tuple = (256, 704),
+) -> list[np.ndarray]:
+    """将 LSS 期望深度反投影到 ego 空间, 返回每相机点云列表.
+
+    Returns:
+        list of (M, 3) np.ndarray, 每个相机一份 ego 坐标点.
+    """
+    depth_np = depth.float().numpy()[:n_cams]
+    D, fH, fW = depth_np.shape[1], depth_np.shape[2], depth_np.shape[3]
+    bins = _make_depth_bins(depth_cfg)
+    expected_depth = (depth_np * bins[None, :, None, None]).sum(axis=1)  # (N, fH, fW)
+
+    cam_params = _extract_cam_params_from_img_inputs(img_inputs)
+    if cam_params is None:
+        return []
+
+    H_in, W_in = input_size
+    u_grid = np.linspace(0, W_in - 1, fW, dtype=np.float32)
+    v_grid = np.linspace(0, H_in - 1, fH, dtype=np.float32)
+    uu, vv = np.meshgrid(u_grid, v_grid)
+    ones_hw = np.ones((fH, fW), dtype=np.float32)
+    aug_pts = np.stack([uu, vv, ones_hw], axis=-1).reshape(-1, 3)
+
+    all_ego_pts = []
+    for cam_idx in range(n_cams):
+        ed = expected_depth[cam_idx].flatten()
+        K = cam_params["intrins"][cam_idx]
+        post_rot = cam_params["post_rots"][cam_idx]
+        post_tran = cam_params["post_trans"][cam_idx]
+        s2ke = cam_params["sensor2keyegos"][cam_idx]
+
+        inv_post_rot = np.linalg.inv(post_rot)
+        deaug = (aug_pts - post_tran[None, :]) @ inv_post_rot.T
+        uvd = np.stack([deaug[:, 0] * ed, deaug[:, 1] * ed, ed], axis=-1)
+        K_inv = np.linalg.inv(K)
+        R_c2e = s2ke[:3, :3]
+        t_c2e = s2ke[:3, 3]
+        combine = R_c2e @ K_inv
+        p_ego = uvd @ combine.T + t_c2e[None, :]
+        all_ego_pts.append(p_ego)
+    return all_ego_pts
+
+
+def _style_3d_ax(ax, title: str, lim: int = 48):
+    """统一 3D 轴样式."""
+    theta = np.linspace(0, 2 * np.pi, 200)
+    for r in [10, 20, 30, 40]:
+        cx = r * np.cos(theta)
+        cy = r * np.sin(theta)
+        cz = np.zeros_like(theta)
+        ax.plot(cx, cy, cz, color="white", alpha=0.35, linewidth=0.8)
+        ax.text(r + 0.5, 0, 0, f"{r}m", color="white", fontsize=7, alpha=0.7,
+                ha="left", va="center")
+    ax.scatter([0], [0], [0], c="white", s=80, marker="*",
+               zorder=10, edgecolors="none")
+    ax.plot([-lim, lim], [0, 0], [0, 0], color="white", alpha=0.15, lw=0.6)
+    ax.plot([0, 0], [-lim, lim], [0, 0], color="white", alpha=0.15, lw=0.6)
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_zlim(-4, 8)
+    ax.set_xlabel("X / m  (front →)", color="white", fontsize=8, labelpad=6)
+    ax.set_ylabel("Y / m  (← left)", color="white", fontsize=8, labelpad=6)
+    ax.set_zlabel("Z / m  (up)", color="white", fontsize=8, labelpad=6)
+    ax.view_init(elev=55, azim=-90)
+    ax.tick_params(colors="white", labelsize=6)
+    for spine in (ax.xaxis.pane, ax.yaxis.pane, ax.zaxis.pane):
+        spine.fill = False
+        spine.set_edgecolor((1, 1, 1, 0.08))
+    ax.xaxis.line.set_color((1, 1, 1, 0.15))
+    ax.yaxis.line.set_color((1, 1, 1, 0.15))
+    ax.zaxis.line.set_color((1, 1, 1, 0.15))
+    ax.set_title(title, fontsize=11, fontweight="bold", color="white", pad=14)
+
+
+# =====================================================================
+#  (1c-helper) LiDAR → 相机投影, 构建射线方向真值深度
+#
+#  原理: 将 LiDAR 3D 点从 key ego 坐标系投影到每个相机的 2D 图像平面:
+#    p_ego → inv(sensor2keyego) → p_cam → K → (u,v,z_cam) → post_aug → (u',v')
+#  其中 z_cam 即为 **相机光轴方向深度**, 与 LSS 深度 bin 定义完全一致.
+#  这样就可以在同一像素的同一射线方向上, 严格比较 pred 深度与 GT 深度.
+# =====================================================================
+
+def _project_lidar_to_cameras(
+    lidar_pts_ego: np.ndarray,
+    cam_params: dict,
+    n_cams: int = 6,
+    input_size: tuple = (256, 704),
+    feat_size: tuple = (16, 44),
+    depth_range: tuple = (1.0, 45.0),
+) -> list[dict]:
+    """将 LiDAR 3D 点投影到每个相机的特征网格, 获取射线方向真值深度.
+
+    对每个相机:
+        1. keyego → cam 坐标变换
+        2. 过滤 z_cam > 0 (在相机前方的点)
+        3. 针孔投影 + 数据增强映射到增强图像坐标 (u_aug, v_aug)
+        4. 映射到特征网格 (feat_i, feat_j)
+        5. 每个特征像素保留最近表面点 (最小 z_cam)
+
+    Args:
+        lidar_pts_ego: (N, 3) key ego 坐标系下的 LiDAR 点
+        cam_params: dict from _extract_cam_params_from_img_inputs
+        n_cams: 相机数
+        input_size: 输入图像尺寸 (H_in, W_in)
+        feat_size: 特征图尺寸 (fH, fW)
+        depth_range: 有效深度范围 (min, max), 与 LSS depth bins 一致
+
+    Returns:
+        list of dict per camera:
+            'u_aug': (M,) 增强图像 u 坐标 (所有投影点)
+            'v_aug': (M,) 增强图像 v 坐标
+            'z_cam': (M,) 相机光轴深度 = 射线方向 GT 深度
+            'feat_i': (M,) 对应特征网格行号
+            'feat_j': (M,) 对应特征网格列号
+            'gt_depth_map': (fH, fW) 稀疏 GT 深度图 (-1 = 无值)
+            'valid_mask': (fH, fW) bool, True = 该像素有 GT 深度
+    """
+    H_in, W_in = input_size
+    fH, fW = feat_size
+    d_min, d_max = depth_range
+
+    # 预计算齐次点
+    pts_h = np.concatenate(
+        [lidar_pts_ego, np.ones((len(lidar_pts_ego), 1), dtype=np.float32)],
+        axis=1)  # (N, 4)
+
+    results = []
+    for cam_idx in range(n_cams):
+        s2ke = cam_params["sensor2keyegos"][cam_idx]  # (4,4) cam→keyego
+        K = cam_params["intrins"][cam_idx]             # (3,3)
+        post_rot = cam_params["post_rots"][cam_idx]    # (3,3)
+        post_tran = cam_params["post_trans"][cam_idx]  # (3,)
+
+        # keyego → camera
+        ke2cam = np.linalg.inv(s2ke.astype(np.float64)).astype(np.float32)
+        pts_cam = (ke2cam @ pts_h.T).T[:, :3]  # (N, 3)
+
+        z_cam = pts_cam[:, 2].copy()
+
+        # 过滤: 在相机前方
+        front = z_cam > 0.5
+        pts_cam_f = pts_cam[front]
+        z_cam_f = z_cam[front]
+
+        # 针孔投影
+        pts_img = (K @ pts_cam_f.T).T  # (M, 3)
+        u = pts_img[:, 0] / pts_img[:, 2]
+        v = pts_img[:, 1] / pts_img[:, 2]
+
+        # 数据增强映射
+        uv1 = np.stack([u, v, np.ones_like(u)], axis=-1)  # (M, 3)
+        uv_aug = (post_rot @ uv1.T).T + post_tran[None, :]
+        u_aug = uv_aug[:, 0]
+        v_aug = uv_aug[:, 1]
+
+        # 过滤: 图像边界内
+        in_bounds = ((u_aug >= 0) & (u_aug < W_in) &
+                     (v_aug >= 0) & (v_aug < H_in))
+        u_aug = u_aug[in_bounds]
+        v_aug = v_aug[in_bounds]
+        z_cam_f = z_cam_f[in_bounds]
+
+        # 过滤: 深度范围内 (与 LSS bins 一致)
+        in_depth = (z_cam_f >= d_min) & (z_cam_f <= d_max)
+        u_aug = u_aug[in_depth]
+        v_aug = v_aug[in_depth]
+        z_cam_f = z_cam_f[in_depth]
+
+        # 映射到特征网格坐标
+        feat_j = np.clip(
+            np.round(u_aug * (fW - 1) / max(W_in - 1, 1)).astype(np.intp),
+            0, fW - 1)
+        feat_i = np.clip(
+            np.round(v_aug * (fH - 1) / max(H_in - 1, 1)).astype(np.intp),
+            0, fH - 1)
+
+        # 构建稀疏 GT 深度图 (每像素保留最近表面点)
+        # 策略: 按深度降序排列后直接赋值, 近处覆盖远处
+        gt_depth_map = np.full((fH, fW), -1.0, dtype=np.float32)
+        if len(z_cam_f) > 0:
+            order = np.argsort(-z_cam_f)  # 降序: 远→近
+            z_sorted = z_cam_f[order]
+            fi_sorted = feat_i[order]
+            fj_sorted = feat_j[order]
+            gt_depth_map[fi_sorted, fj_sorted] = z_sorted  # 近处最后赋值, 覆盖远处
+
+        valid_mask = gt_depth_map > 0
+
+        results.append({
+            'u_aug': u_aug,
+            'v_aug': v_aug,
+            'z_cam': z_cam_f,
+            'feat_i': feat_i,
+            'feat_j': feat_j,
+            'gt_depth_map': gt_depth_map,
+            'valid_mask': valid_mask,
+        })
+
+    return results
+
+
+
+def visualize_lss_depth_3d(
+    depth: torch.Tensor,
+    img_inputs: tuple,
+    lidar_pts_ego: np.ndarray,
+    save_path: str,
+    depth_cfg: tuple = (1.0, 45.0, 0.5),
+    n_cams: int = 6,
+    input_size: tuple = (256, 704),
+):
+    """LSS 射线方向深度误差分析可视化 (重新设计版).
+
+    核心方法改进 (相比旧版 3D KNN):
+    ─────────────────────────────────────────────────────────────────
+    旧版: 将 LSS 预测点反投影到 3D ego 空间, 用 cKDTree 找最近 LiDAR 点
+          的 3D 欧式距离作为 "depth error" — 这会匹配到错误物体上,
+          严重低估真实深度误差.
+
+    新版: 将 LiDAR 3D 点正向投影到每个相机的 2D 图像平面, 在同一像素的
+          同一射线方向上严格比较 LSS 期望深度 E[d] 与 LiDAR 真值深度
+          z_cam — 这是深度估计任务的标准评估方式.
+    ─────────────────────────────────────────────────────────────────
+
+    布局:
+        Row 0-1: 6 相机面板 (2×3), 输入图像 + LiDAR 投影点射线深度误差散点
+        Row 2:   [Pred vs GT 散点图] [每相机误差柱状图] [误差-距离曲线]
+
+    评估指标:
+        · Mean/Median/P90 |pred - gt|  (绝对误差)
+        · RMSE = sqrt(mean((pred-gt)²))
+        · Bias = mean(pred - gt)  (+偏表示预测偏远, -偏表示预测偏近)
+        · AbsRel = mean(|pred-gt| / gt)
+        · δ<1.25^k (k=1,2,3): max(pred/gt, gt/pred) < 阈值 的像素占比
+
+    Args:
+        depth: (B*N, D, fH, fW) softmax 深度分布
+        img_inputs: img_inputs tuple
+        lidar_pts_ego: (N_lidar, 3) LiDAR 真值点 (key ego 坐标系)
+        save_path: 输出路径
+        depth_cfg: depth bins 配置 (min, max, step)
+        n_cams: 相机数
+        input_size: 输入图像尺寸 (H, W)
+    """
+    # --- 计算 LSS 期望深度 ---
+    depth_np = depth.float().numpy()[:n_cams]  # (N, D, fH, fW)
+    D, fH, fW = depth_np.shape[1], depth_np.shape[2], depth_np.shape[3]
+    bins = _make_depth_bins(depth_cfg)  # (D,)
+    expected_depth = (depth_np * bins[None, :, None, None]).sum(axis=1)  # (N, fH, fW)
+
+    # --- 提取相机参数 ---
+    cam_params = _extract_cam_params_from_img_inputs(img_inputs)
+    if cam_params is None:
+        print("  [跳过] LSS depth 3D: 无法提取相机参数")
+        return
+
+    # --- 过滤 LiDAR 到感知范围 ---
+    pcr = _PCR  # [-40, -40, -1, 40, 40, 5.4]
+    mask_lidar = (
+        (lidar_pts_ego[:, 0] >= pcr[0]) & (lidar_pts_ego[:, 0] <= pcr[3]) &
+        (lidar_pts_ego[:, 1] >= pcr[1]) & (lidar_pts_ego[:, 1] <= pcr[4]) &
+        (lidar_pts_ego[:, 2] >= pcr[2]) & (lidar_pts_ego[:, 2] <= pcr[5])
+    )
+    lidar_filtered = lidar_pts_ego[mask_lidar]
+
+    # --- 投影 LiDAR 到每个相机的特征网格 ---
+    projections = _project_lidar_to_cameras(
+        lidar_filtered, cam_params,
+        n_cams=n_cams,
+        input_size=input_size,
+        feat_size=(fH, fW),
+        depth_range=(depth_cfg[0], depth_cfg[1]),
+    )
+
+    # --- 计算每相机射线方向深度误差 ---
+    cam_errors_signed: list[np.ndarray] = []   # pred - gt (有符号)
+    cam_errors_abs: list[np.ndarray] = []      # |pred - gt|
+    cam_gt_depths: list[np.ndarray] = []       # GT 深度
+    cam_pred_depths: list[np.ndarray] = []     # pred 深度
+    cam_n_matched: list[int] = []              # 匹配像素数
+
+    for cam_idx in range(n_cams):
+        proj = projections[cam_idx]
+        mask = proj['valid_mask']  # (fH, fW)
+        if mask.sum() == 0:
+            cam_errors_signed.append(np.array([]))
+            cam_errors_abs.append(np.array([]))
+            cam_gt_depths.append(np.array([]))
+            cam_pred_depths.append(np.array([]))
+            cam_n_matched.append(0)
+            continue
+
+        gt_d = proj['gt_depth_map'][mask]           # (M,) GT depth along ray
+        pred_d = expected_depth[cam_idx][mask]       # (M,) LSS E[d]
+        signed_err = pred_d - gt_d                   # + = predict too far
+        abs_err = np.abs(signed_err)
+
+        cam_errors_signed.append(signed_err)
+        cam_errors_abs.append(abs_err)
+        cam_gt_depths.append(gt_d)
+        cam_pred_depths.append(pred_d)
+        cam_n_matched.append(int(mask.sum()))
+
+    # --- 合并所有相机的统计量 ---
+    all_gt = np.concatenate([d for d in cam_gt_depths if len(d) > 0])
+    all_pred = np.concatenate([d for d in cam_pred_depths if len(d) > 0])
+    all_abs_err = np.concatenate([e for e in cam_errors_abs if len(e) > 0])
+    all_signed_err = np.concatenate([e for e in cam_errors_signed if len(e) > 0])
+    total_matched = len(all_gt)
+
+    if total_matched == 0:
+        print("  [跳过] LSS depth 3D: 无射线匹配点, 无法计算深度误差")
+        return
+
+    # --- 全局评估指标 ---
+    mean_abs = float(all_abs_err.mean())
+    median_abs = float(np.median(all_abs_err))
+    p90_abs = float(np.percentile(all_abs_err, 90))
+    mean_signed = float(all_signed_err.mean())
+    rmse = float(np.sqrt((all_signed_err ** 2).mean()))
+
+    # 深度估计标准指标
+    gt_safe = np.maximum(all_gt, 1e-6)
+    pred_safe = np.maximum(all_pred, 1e-6)
+    ratios = np.maximum(pred_safe / gt_safe, gt_safe / pred_safe)
+    delta1 = float((ratios < 1.25).mean() * 100)
+    delta2 = float((ratios < 1.25**2).mean() * 100)
+    delta3 = float((ratios < 1.25**3).mean() * 100)
+    abs_rel = float((all_abs_err / gt_safe).mean())
+
+    # --- 解码输入图像 ---
+    imgs = _decode_input_images_to_bgr01(img_inputs)
+
+    # =====================================================================
+    #  绘图
+    # =====================================================================
+    bg_color = "#0d1117"
+    panel_face = "#131924"
+    fig = plt.figure(figsize=(42, 28), facecolor=bg_color)
+    fig.suptitle(
+        "LSS Ray-Aligned Depth Error Analysis\n"
+        "Method: LiDAR → camera projection → per-pixel depth comparison "
+        "along camera ray  (replaces incorrect 3D KNN)\n"
+        f"Depth bins: {depth_cfg[0]:.1f}→{depth_cfg[1]:.1f}m, "
+        f"step={depth_cfg[2]:.1f}m, D={D}, "
+        f"feature=({fH}×{fW}), "
+        f"matched={total_matched} pixels across {n_cams} cameras",
+        fontsize=14, fontweight="bold", color="white", y=0.98,
+    )
+
+    # 布局:  top = 2×3 cameras;  bottom = 1×3 analysis panels
+    gs_top = GridSpec(2, 3, figure=fig, top=0.93, bottom=0.42,
+                      hspace=0.22, wspace=0.08,
+                      left=0.03, right=0.97)
+    gs_bot = GridSpec(1, 3, figure=fig, top=0.37, bottom=0.05,
+                      hspace=0.05, wspace=0.18,
+                      left=0.05, right=0.95)
+
+    err_vmax = min(8.0, float(np.percentile(all_abs_err, 98)))
+
+    # ====== Row 0-1: 6 相机 — 输入图像 + 射线深度误差散点叠加 ======
+    for idx in range(n_cams):
+        cam_name, grid_r, grid_c = _CAM_GRID[idx]
+        ax = fig.add_subplot(gs_top[grid_r, grid_c])
+
+        # 输入图像
+        img = imgs[idx]  # (H, W, 3) RGB 0~1
+        ax.imshow(img)
+
+        proj = projections[idx]
+        u = proj['u_aug']
+        v = proj['v_aug']
+        z_gt = proj['z_cam']
+
+        if len(u) > 0 and cam_n_matched[idx] > 0:
+            # 对每个 LiDAR 投影点, 查找其所在特征像素的 LSS 预测深度
+            fj = np.clip(np.round(u * (fW - 1) / max(input_size[1] - 1, 1)
+                                  ).astype(np.intp), 0, fW - 1)
+            fi = np.clip(np.round(v * (fH - 1) / max(input_size[0] - 1, 1)
+                                  ).astype(np.intp), 0, fH - 1)
+            pred_at_pts = expected_depth[idx][fi, fj]
+            err_at_pts = np.abs(pred_at_pts - z_gt)
+
+            sc = ax.scatter(
+                u, v, c=err_at_pts, cmap="jet", s=3.0, alpha=0.85,
+                vmin=0, vmax=err_vmax, edgecolors="none", rasterized=True)
+
+            # 右上角的 colorbar (仅在第一行最右相机上显示)
+            if idx == 2:
+                cbar = plt.colorbar(sc, ax=ax, fraction=0.03, pad=0.01,
+                                    shrink=0.8)
+                cbar.set_label("Ray depth error |pred−gt| (m)",
+                               fontsize=8, color="white")
+                cbar.ax.tick_params(colors="white", labelsize=6)
+
+        mean_e = (float(cam_errors_abs[idx].mean())
+                  if len(cam_errors_abs[idx]) > 0 else 0)
+        bias_e = (float(cam_errors_signed[idx].mean())
+                  if len(cam_errors_signed[idx]) > 0 else 0)
+        n_m = cam_n_matched[idx]
+        cam_color = _CAM_INFO[cam_name]["color"]
+        ax.set_title(
+            f"{_short_cam(cam_name)}  |  "
+            f"n={n_m}  mean={mean_e:.2f}m  bias={bias_e:+.2f}m",
+            fontsize=10, fontweight="bold", color=cam_color, pad=4)
+        ax.axis("off")
+
+    # ====== Bottom-left: Pred vs GT 深度散点图 ======
+    ax_scatter = fig.add_subplot(gs_bot[0, 0], facecolor=panel_face)
+
+    # 密度着色 (避免过多点重叠)
+    max_scatter_pts = 15000
+    if total_matched > max_scatter_pts:
+        idx_sub = np.random.default_rng(42).choice(
+            total_matched, max_scatter_pts, replace=False)
+    else:
+        idx_sub = np.arange(total_matched)
+
+    try:
+        from scipy.stats import gaussian_kde
+        xy = np.vstack([all_gt[idx_sub], all_pred[idx_sub]])
+        kde = gaussian_kde(xy)
+        density = kde(xy)
+    except Exception:
+        density = np.ones(len(idx_sub))
+
+    ax_scatter.scatter(
+        all_gt[idx_sub], all_pred[idx_sub],
+        c=density, cmap="inferno", s=4, alpha=0.6,
+        edgecolors="none", rasterized=True)
+
+    # y = x 参考线
+    d_lo, d_hi = float(depth_cfg[0]), float(depth_cfg[1])
+    ax_scatter.plot([d_lo, d_hi], [d_lo, d_hi], '--', color="cyan",
+                    linewidth=2, alpha=0.8, label="y = x (perfect)")
+    # ±20% 误差带
+    ax_scatter.fill_between(
+        [d_lo, d_hi], [d_lo * 0.8, d_hi * 0.8], [d_lo * 1.2, d_hi * 1.2],
+        color="cyan", alpha=0.06, label="±20% band")
+
+    ax_scatter.set_xlabel("GT Depth (m) — LiDAR z_cam along camera ray",
+                          fontsize=10, color="white")
+    ax_scatter.set_ylabel("Predicted Depth (m) — LSS E[d]",
+                          fontsize=10, color="white")
+    ax_scatter.set_title("Predicted vs Ground Truth Depth (ray-aligned)",
+                         fontsize=12, fontweight="bold", color="white", pad=10)
+    ax_scatter.set_xlim(d_lo, d_hi)
+    ax_scatter.set_ylim(d_lo, d_hi)
+    ax_scatter.set_aspect("equal")
+    ax_scatter.tick_params(colors="white", labelsize=8)
+    for sp in ax_scatter.spines.values():
+        sp.set_color("white")
+        sp.set_alpha(0.3)
+    ax_scatter.grid(color="white", alpha=0.1, linewidth=0.5)
+
+    # 指标标注 (左上角)
+    metrics_text = (
+        f"AbsRel: {abs_rel:.4f}\n"
+        f"RMSE:   {rmse:.2f}m\n"
+        f"δ<1.25:  {delta1:.1f}%\n"
+        f"δ<1.25²: {delta2:.1f}%\n"
+        f"δ<1.25³: {delta3:.1f}%\n"
+        f"Bias:   {mean_signed:+.2f}m"
+    )
+    ax_scatter.text(
+        0.03, 0.97, metrics_text,
+        transform=ax_scatter.transAxes, fontsize=9, va="top",
+        fontfamily="monospace", color="white",
+        bbox=dict(boxstyle="round,pad=0.3", fc="#1a1a2e",
+                  ec="white", alpha=0.7))
+
+    leg_s = ax_scatter.legend(fontsize=8, loc="lower right", framealpha=0.3,
+                              edgecolor="white", facecolor="#1a1a2e")
+    for t in leg_s.get_texts():
+        t.set_color("white")
+
+    # ====== Bottom-center: 每相机射线深度误差柱状图 ======
+    ax_bar = fig.add_subplot(gs_bot[0, 1], facecolor=panel_face)
+
+    cam_labels = [_short_cam(_CAM_ORDER[i]).replace("_", "\n")
+                  for i in range(n_cams)]
+    cam_colors = [_CAM_INFO[_CAM_ORDER[i]]["color"] for i in range(n_cams)]
+    cam_means = [float(e.mean()) if len(e) > 0 else 0.0
+                 for e in cam_errors_abs]
+    cam_medians = [float(np.median(e)) if len(e) > 0 else 0.0
+                   for e in cam_errors_abs]
+    cam_p90s = [float(np.percentile(e, 90)) if len(e) > 0 else 0.0
+                for e in cam_errors_abs]
+
+    x = np.arange(n_cams)
+    w = 0.22
+    bars1 = ax_bar.bar(x - w, cam_means, w, color=cam_colors, alpha=0.85,
+                       edgecolor="white", linewidth=0.5, label="Mean")
+    bars2 = ax_bar.bar(x, cam_medians, w, color=cam_colors, alpha=0.55,
+                       edgecolor="white", linewidth=0.5, label="Median",
+                       hatch="//")
+    bars3 = ax_bar.bar(x + w, cam_p90s, w, color=cam_colors, alpha=0.35,
+                       edgecolor="white", linewidth=0.5, label="P90",
+                       hatch="xx")
+
+    # 柱顶标注数值
+    for bar_group in [bars1, bars2, bars3]:
+        for bar in bar_group:
+            h = bar.get_height()
+            if h > 0:
+                ax_bar.text(bar.get_x() + bar.get_width() / 2, h + 0.05,
+                            f"{h:.2f}", ha="center", va="bottom",
+                            fontsize=7, color="white", fontweight="bold")
+
+    ax_bar.set_xticks(x)
+    ax_bar.set_xticklabels(cam_labels, fontsize=8, color="white")
+    ax_bar.set_ylabel("Ray-Aligned Depth Error (m)", fontsize=9, color="white")
+    ax_bar.set_title("Per-Camera Ray-Aligned Depth Error\n"
+                     "(|LSS E[d] − LiDAR z_cam| at matched pixels)",
+                     fontsize=11, fontweight="bold", color="white", pad=10)
+    ax_bar.tick_params(colors="white", labelsize=7)
+    ax_bar.spines["top"].set_visible(False)
+    ax_bar.spines["right"].set_visible(False)
+    for sp in ax_bar.spines.values():
+        sp.set_color("white")
+        sp.set_alpha(0.3)
+    ax_bar.set_facecolor(panel_face)
+    ax_bar.grid(axis="y", color="white", alpha=0.1, linewidth=0.5)
+
+    leg_bar = ax_bar.legend(fontsize=8, loc="upper right", framealpha=0.3,
+                            edgecolor="white", facecolor="#1a1a2e")
+    for t in leg_bar.get_texts():
+        t.set_color("white")
+
+    # 柱状图下方标注匹配点数
+    for i in range(n_cams):
+        ax_bar.text(i, -0.04, f"n={cam_n_matched[i]}", ha="center",
+                    transform=ax_bar.get_xaxis_transform(),
+                    fontsize=7, color="white", alpha=0.7)
+
+    # ====== Bottom-right: 射线深度误差 vs GT 深度距离曲线 ======
+    ax_curve = fig.add_subplot(gs_bot[0, 2], facecolor=panel_face)
+
+    dist_bins = np.arange(depth_cfg[0], depth_cfg[1] + 1, 2.0)
+    bin_centers = (dist_bins[:-1] + dist_bins[1:]) / 2
+
+    for cam_idx in range(n_cams):
+        gt_d = cam_gt_depths[cam_idx]
+        abs_e = cam_errors_abs[cam_idx]
+        if len(gt_d) == 0:
+            continue
+
+        cam_name = _CAM_ORDER[cam_idx]
+        color = _CAM_INFO[cam_name]["color"]
+
+        bin_means = []
+        bin_stds = []
+        for bi in range(len(dist_bins) - 1):
+            mask = (gt_d >= dist_bins[bi]) & (gt_d < dist_bins[bi + 1])
+            if mask.sum() > 3:
+                bin_means.append(float(abs_e[mask].mean()))
+                bin_stds.append(float(abs_e[mask].std()))
+            else:
+                bin_means.append(np.nan)
+                bin_stds.append(np.nan)
+
+        means_arr = np.array(bin_means)
+        stds_arr = np.array(bin_stds)
+        valid = ~np.isnan(means_arr)
+
+        if valid.sum() > 0:
+            ax_curve.plot(
+                bin_centers[valid], means_arr[valid],
+                color=color, linewidth=2.0, alpha=0.85,
+                marker="o", markersize=3,
+                label=_short_cam(cam_name))
+            if valid.sum() > 1:
+                ax_curve.fill_between(
+                    bin_centers[valid],
+                    np.maximum(0, (means_arr - stds_arr)[valid]),
+                    (means_arr + stds_arr)[valid],
+                    color=color, alpha=0.08)
+
+    ax_curve.set_xlabel("GT Depth (m) — distance along camera ray",
+                        fontsize=9, color="white")
+    ax_curve.set_ylabel("Mean |Pred − GT| Depth Error (m)",
+                        fontsize=9, color="white")
+    ax_curve.set_title("Ray-Aligned Depth Error vs. GT Distance\n"
+                       "(X = LiDAR z_cam,  Y = |E[d] − z_cam|)",
+                       fontsize=11, fontweight="bold", color="white", pad=10)
+    ax_curve.tick_params(colors="white", labelsize=7)
+    ax_curve.spines["top"].set_visible(False)
+    ax_curve.spines["right"].set_visible(False)
+    for sp in ax_curve.spines.values():
+        sp.set_color("white")
+        sp.set_alpha(0.3)
+    ax_curve.set_facecolor(panel_face)
+    ax_curve.grid(color="white", alpha=0.1, linewidth=0.5)
+    ax_curve.set_xlim(depth_cfg[0], depth_cfg[1])
+    ax_curve.set_ylim(bottom=0)
+
+    leg_curve = ax_curve.legend(fontsize=7, loc="upper left", framealpha=0.3,
+                                edgecolor="white", facecolor="#1a1a2e",
+                                ncol=2)
+    for t in leg_curve.get_texts():
+        t.set_color("white")
+
+    # --- 统计信息文字 (右下角) ---
+    stats_text = (
+        f"Ray-Aligned Depth Error Statistics\n"
+        f"{'=' * 38}\n"
+        f"Mean |err|:   {mean_abs:.3f} m\n"
+        f"Median |err|: {median_abs:.3f} m\n"
+        f"P90 |err|:    {p90_abs:.3f} m\n"
+        f"RMSE:         {rmse:.3f} m\n"
+        f"Mean bias:    {mean_signed:+.3f} m\n"
+        f"  (+ = predict too far)\n"
+        f"{'=' * 38}\n"
+        f"AbsRel:  {abs_rel:.4f}\n"
+        f"δ<1.25:  {delta1:.1f}%\n"
+        f"δ<1.25²: {delta2:.1f}%\n"
+        f"δ<1.25³: {delta3:.1f}%\n"
+        f"{'=' * 38}\n"
+        f"Matched pixels: {total_matched}\n"
+        f"LiDAR pts (in range): {len(lidar_filtered)}\n"
+        f"Feature grid: {fH}×{fW}\n"
+        f"Method: LiDAR→cam project\n"
+        f"  (ray-aligned, NOT 3D KNN)"
+    )
+    fig.text(0.97, 0.01, stats_text, fontsize=9, fontfamily="monospace",
+             color="white", ha="right", va="bottom",
+             bbox=dict(boxstyle="round,pad=0.5", fc="#1a1a2e",
+                       ec="white", alpha=0.8))
+
+    _save_figure(fig, save_path, facecolor=fig.get_facecolor())
 
 
 # =====================================================================
@@ -880,9 +1464,7 @@ def visualize_feature_map_bev(feat: torch.Tensor, title: str, save_path: str):
     axes[1,2].tick_params(labelsize=7)
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path)
 
 
 # =====================================================================
@@ -897,37 +1479,18 @@ def visualize_feature_map_bev(feat: torch.Tensor, title: str, save_path: str):
 # =====================================================================
 
 def _bev_argmax_proj(pred: np.ndarray) -> np.ndarray:
-    """(Dx,Dy,Dz) → BEV (Dx,Dy): 沿Z从高到低取首个非free非others类."""
-    result = np.full(pred.shape[:2], 17, dtype=np.uint8)
-    for z in range(pred.shape[2] - 1, -1, -1):
-        layer = pred[:, :, z]
-        valid = (layer != 17) & (layer != 0) & (result == 17)
-        result[valid] = layer[valid]
-    return result
+    """(Dx,Dy,Dz) → BEV (Dx,Dy): 委托给 OccGrid.bev_projection."""
+    return OccGrid.from_numpy(pred).bev_projection()
 
 
 def _side_argmax_proj(pred: np.ndarray) -> np.ndarray:
-    """(Dx,Dy,Dz) → Side (Dx,Dz): 沿Y取首个非free类."""
-    result = np.full((pred.shape[0], pred.shape[2]), 17, dtype=np.uint8)
-    for y in range(pred.shape[1]):
-        layer = pred[:, y, :]
-        valid = (layer != 17) & (layer != 0) & (result == 17)
-        result[valid] = layer[valid]
-    return result
+    """(Dx,Dy,Dz) → Side (Dx,Dz): 委托给 OccGrid.side_projection."""
+    return OccGrid.from_numpy(pred).side_projection()
 
 
 def _front_argmax_proj(pred: np.ndarray) -> np.ndarray:
-    """(Dx,Dy,Dz) → Front (Dy,Dz): 沿X取首个非free类."""
-    result = np.full((pred.shape[1], pred.shape[2]), 17, dtype=np.uint8)
-    for x in range(pred.shape[0]):
-        layer = pred[x, :, :]
-        valid = (layer != 17) & (layer != 0) & (result == 17)
-        result[valid] = layer[valid]
-    return result
-
-
-def _cls_to_rgb(cls_2d: np.ndarray) -> np.ndarray:
-    return _COLOR_LUT[cls_2d.flatten()].reshape(*cls_2d.shape, 3)
+    """(Dx,Dy,Dz) → Front (Dy,Dz): 委托给 OccGrid.front_projection."""
+    return OccGrid.from_numpy(pred).front_projection()
 
 
 def visualize_occ_head(feat: torch.Tensor, title: str, save_path: str):
@@ -1061,19 +1624,13 @@ def visualize_occ_head(feat: torch.Tensor, title: str, save_path: str):
                   ha="center", fontsize=6, color="gray")
 
     present = np.unique(pred_cls[pred_cls != 17])
-    patches = [Patch(facecolor=OCC_CLASS_COLORS.get(int(c),(0.5,0.5,0.5)),
-                     edgecolor="k", lw=0.4,
-                     label=OCC_CLASS_NAMES[int(c)] if int(c) < len(OCC_CLASS_NAMES)
-                           else f"cls{c}")
-               for c in present]
+    patches = _make_cls_patches(pred_cls)
     if patches:
         fig.legend(handles=patches, loc="lower center",
                    ncol=min(9, len(patches)), fontsize=7,
                    frameon=True, bbox_to_anchor=(0.5, 0.005))
 
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path)
 
 
 # =====================================================================
@@ -1091,220 +1648,36 @@ def visualize_occ_head(feat: torch.Tensor, title: str, save_path: str):
 
 def _render_bev_panel(ax, occ: np.ndarray, title="BEV",
                       draw_helpers=True, fontsize=11):
-    """渲染BEV面板."""
-    Dx, Dy, Dz = occ.shape
-    bev_rgb = np.ones((Dx, Dy, 3), dtype=np.float32)
-    filled  = np.zeros((Dx, Dy), dtype=bool)
-    for z in range(Dz - 1, -1, -1):
-        layer = occ[:, :, z]
-        valid = (layer != 17) & (layer != 0) & ~filled
-        if not valid.any(): continue
-        for cid in np.unique(layer[valid]):
-            mask = (layer == cid) & valid
-            bev_rgb[mask] = OCC_CLASS_COLORS.get(int(cid), (0.5,0.5,0.5))
-            filled[mask] = True
-
-    ax.imshow(bev_rgb, origin="lower", aspect="equal")
-    if draw_helpers:
-        draw_camera_fovs(ax, alpha_fill=0.09, alpha_line=0.70)
-        draw_ego_vehicle(ax, linewidth=2.0, color="#1E90FF")
-        add_bev_annotations(ax, title=title, fontsize=fontsize, tick_m=10.0)
-    else:
-        ax.axis("off")
-        ax.set_title(title, fontsize=fontsize, fontweight="bold", pad=8)
+    """渲染BEV面板 — 委托给 OccVoxelRenderer."""
+    grid = OccGrid.from_numpy(occ)
+    renderer = OccVoxelRenderer(grid, voxel_step=1)
+    renderer.render_bev(ax, draw_helpers=draw_helpers, title=title, fontsize=fontsize)
 
 
 def _render_isometric_panel(ax, occ: np.ndarray, voxel_step=2,
                              azim_deg=45.0, elev_deg=35.0, z_scale=2.5,
                              title="3D Isometric", fontsize=11):
-    """等轴测体素渲染 (软件光照 + Painter's Algorithm)."""
-    occ = occ[::voxel_step, ::voxel_step, ::voxel_step]
-    Dx, Dy, Dz = occ.shape
-    occupied = (occ != 17) & (occ != 0)
-    if not occupied.any():
-        ax.text(0.5, 0.5, "No occupied voxels", transform=ax.transAxes,
-                ha="center", va="center", fontsize=14)
-        ax.axis("off"); ax.set_title(title, fontsize=fontsize, fontweight="bold"); return
-
-    azim = np.radians(azim_deg); elev = np.radians(elev_deg)
-    cos_a, sin_a = np.cos(azim), np.sin(azim)
-    cos_e, sin_e = np.cos(elev), np.sin(elev)
-
-    face_defs = [
-        ( 1, 0, 0, np.array([[1,0,0],[1,1,0],[1,1,1],[1,0,1]], dtype=np.float64), 0.80),
-        (-1, 0, 0, np.array([[0,0,0],[0,0,1],[0,1,1],[0,1,0]], dtype=np.float64), 0.70),
-        ( 0, 1, 0, np.array([[0,1,0],[0,1,1],[1,1,1],[1,1,0]], dtype=np.float64), 0.65),
-        ( 0,-1, 0, np.array([[0,0,0],[1,0,0],[1,0,1],[0,0,1]], dtype=np.float64), 0.75),
-        ( 0, 0, 1, np.array([[0,0,1],[1,0,1],[1,1,1],[0,1,1]], dtype=np.float64), 1.00),
-        ( 0, 0,-1, np.array([[0,0,0],[0,1,0],[1,1,0],[1,0,0]], dtype=np.float64), 0.55),
-    ]
-
-    all_p, all_c, all_d = [], [], []
-    for dx, dy, dz, vtpl, shade in face_defs:
-        xi, yi, zi = np.where(occupied)
-        if len(xi) == 0: continue
-        n = len(xi)
-        orig = np.stack([xi, yi, zi], axis=-1).astype(np.float64)
-        v3 = orig[:,None,:] + vtpl[None,:,:]
-        v3[...,2] *= z_scale
-        vx, vy, vz = v3[...,0], v3[...,1], v3[...,2]
-        xr = vx*cos_a - vy*sin_a; yr = vx*sin_a + vy*cos_a
-        v2 = np.stack([xr, yr*sin_e + vz*cos_e], axis=-1)
-        ctr = orig.copy(); ctr[:,2] *= z_scale
-        # depth = projection onto view_dir; 负sin_e因为相机在上方(+z), 高z更近
-        dep = (ctr[:,0]*sin_a + ctr[:,1]*cos_a)*cos_e - ctr[:,2]*sin_e
-        fc = np.ones((n,4)); fc[:,:3] = np.clip(_COLOR_LUT[occ[xi,yi,zi]]*shade, 0, 1)
-        all_p.append(v2); all_c.append(fc); all_d.append(dep)
-
-    if not all_p:
-        ax.text(0.5, 0.5, "No exposed faces", transform=ax.transAxes,
-                ha="center", va="center"); ax.axis("off"); return
-
-    polys = np.concatenate(all_p); fc_ = np.concatenate(all_c)
-    dep_  = np.concatenate(all_d)
-    # Painter's algorithm: 从远到近绘制 (降序排列, 最远先画, 最近最后画在顶层)
-    order = np.argsort(-dep_)
-    polys = polys[order]; fc_ = fc_[order]
-    ec_ = fc_.copy(); ec_[:,:3] = np.clip(ec_[:,:3]*0.5, 0, 1); ec_[:,3] = 0.3
-
-    ax.set_facecolor("#EEEEEE")
-    pc = PolyCollection(polys, closed=True)
-    pc.set_facecolor(fc_); pc.set_edgecolor(ec_); pc.set_linewidth(0.15)
-    ax.add_collection(pc); ax.autoscale(); ax.set_aspect("equal"); ax.axis("off")
-    ax.text(0.01, 0.03,
-            f"↑X(front) ←Y(left) Z↑(height×{z_scale})",
-            transform=ax.transAxes, fontsize=7, color="#333",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7))
-    ax.set_title(title, fontsize=fontsize, fontweight="bold", pad=8)
+    """等轴测体素渲染 — 委托给 OccVoxelRenderer (邻接剔除 + Painter's)."""
+    grid = OccGrid.from_numpy(occ)
+    renderer = OccVoxelRenderer(grid, voxel_step=voxel_step)
+    renderer.render_isometric(
+        ax, azim_deg=azim_deg, elev_deg=elev_deg, z_scale=z_scale,
+        title=title, fontsize=fontsize,
+    )
 
 
 def _render_perspective_panel(ax, occ: np.ndarray, voxel_step=2,
                               heading_deg=0.0, elev_deg=8.0,
                               z_scale=1.5, fov_deg=90.0,
                               title="3D Perspective", fontsize=11):
-    """从自车位置透视投影渲染体素 (Painter's Algorithm).
-
-    Parameters:
-        heading_deg: 相机朝向角 (从+x逆时针为正, °)
-        elev_deg: 俯仰角 (正=向上看, °)
-        z_scale: 高度方向拉伸系数
-        fov_deg: 透视视场角 (°)
-    """
-    occ_sub = occ[::voxel_step, ::voxel_step, ::voxel_step]
-    Dx, Dy, Dz = occ_sub.shape
-    occupied = (occ_sub != 17) & (occ_sub != 0)
-    if not occupied.any():
-        ax.text(0.5, 0.5, "No occupied voxels", transform=ax.transAxes,
-                ha="center", va="center", fontsize=14)
-        ax.axis("off")
-        ax.set_title(title, fontsize=fontsize, fontweight="bold")
-        return
-
-    heading = np.radians(heading_deg)
-    elev = np.radians(elev_deg)
-    cos_h, sin_h = np.cos(heading), np.sin(heading)
-    cos_e, sin_e = np.cos(elev), np.sin(elev)
-
-    # Camera at ego (grid center), at ~1.5m height
-    # Z range: -1m to +5.4m (6.4m total), 1.5m => 39% through range
-    ego_z_frac = (1.5 - _PCR[2]) / (_PCR[5] - _PCR[2])
-    ego = np.array([Dx / 2.0, Dy / 2.0, ego_z_frac * Dz * z_scale])
-
-    # Camera basis vectors (world → camera)
-    cam_fwd = np.array([cos_h * cos_e, sin_h * cos_e, sin_e])
-    cam_fwd /= np.linalg.norm(cam_fwd)
-    cam_right = np.array([sin_h, -cos_h, 0.0])
-    cam_right /= np.linalg.norm(cam_right)
-    cam_up = np.cross(cam_right, cam_fwd)
-    cam_up /= np.linalg.norm(cam_up)
-
-    R = np.stack([cam_right, cam_up, cam_fwd])  # 3×3
-    focal = 1.0 / np.tan(np.radians(fov_deg / 2.0))
-    near_clip = 0.8
-    proj_limit = 8.0
-
-    face_defs = [
-        ( 1, 0, 0, np.array([[1,0,0],[1,1,0],[1,1,1],[1,0,1]], dtype=np.float64), 0.80),
-        (-1, 0, 0, np.array([[0,0,0],[0,0,1],[0,1,1],[0,1,0]], dtype=np.float64), 0.70),
-        ( 0, 1, 0, np.array([[0,1,0],[0,1,1],[1,1,1],[1,1,0]], dtype=np.float64), 0.65),
-        ( 0,-1, 0, np.array([[0,0,0],[1,0,0],[1,0,1],[0,0,1]], dtype=np.float64), 0.75),
-        ( 0, 0, 1, np.array([[0,0,1],[1,0,1],[1,1,1],[0,1,1]], dtype=np.float64), 1.00),
-        ( 0, 0,-1, np.array([[0,0,0],[0,1,0],[1,1,0],[1,0,0]], dtype=np.float64), 0.55),
-    ]
-
-    all_p, all_c, all_d = [], [], []
-    for dx, dy, dz, vtpl, shade in face_defs:
-        xi, yi, zi = np.where(occupied)
-        if len(xi) == 0:
-            continue
-        n = len(xi)
-        orig = np.stack([xi, yi, zi], axis=-1).astype(np.float64)
-
-        # Vertex world positions (with z_scale)
-        v3 = orig[:, None, :] + vtpl[None, :, :]  # (n, 4, 3)
-        v3[..., 2] *= z_scale
-
-        # Transform to camera space: v_cam = R @ (v3 - ego)
-        v_rel = v3 - ego[None, None, :]
-        v_cam = np.einsum('nvi,ji->nvj', v_rel, R)  # (n, 4, 3)
-
-        # Depth along camera forward (index 2)
-        # 对 z<=near 做 clamp, 不丢弃任何面
-        depth_verts = v_cam[..., 2]
-        any_visible = depth_verts.max(axis=1) > near_clip
-        if not any_visible.any():
-            continue
-
-        v_cam = v_cam[any_visible]
-        depth_verts = v_cam[..., 2]
-        xi_f, yi_f, zi_f = xi[any_visible], yi[any_visible], zi[any_visible]
-        n2 = v_cam.shape[0]
-
-        # Perspective projection
-        depth_safe = np.maximum(depth_verts, near_clip)
-        x_proj = v_cam[..., 0] * focal / depth_safe
-        y_proj = v_cam[..., 1] * focal / depth_safe
-        v2 = np.stack([x_proj, y_proj], axis=-1)
-
-        finite_mask = np.isfinite(v2).all(axis=(1, 2))
-        bounded_mask = np.abs(v2).max(axis=(1, 2)) < proj_limit
-        keep = finite_mask & bounded_mask
-        if not keep.any():
-            continue
-
-        v2 = v2[keep]
-        xi_f, yi_f, zi_f = xi_f[keep], yi_f[keep], zi_f[keep]
-        n2 = v2.shape[0]
-
-        # Center depth for painter's algorithm
-        ctr = orig[any_visible][keep].copy() + 0.5
-        ctr[:, 2] *= z_scale
-        ctr_rel = ctr - ego[None, :]
-        dep = ctr_rel @ R[2]  # dot with cam_fwd
-
-        fc = np.ones((n2, 4))
-        fc[:, :3] = np.clip(_COLOR_LUT[occ_sub[xi_f, yi_f, zi_f]] * shade, 0, 1)
-        all_p.append(v2); all_c.append(fc); all_d.append(dep)
-
-    if not all_p:
-        ax.text(0.5, 0.5, "No visible faces", transform=ax.transAxes,
-                ha="center", va="center")
-        ax.axis("off")
-        return
-
-    polys = np.concatenate(all_p)
-    fc_ = np.concatenate(all_c)
-    dep_ = np.concatenate(all_d)
-    order = np.argsort(-dep_)
-    polys = polys[order]; fc_ = fc_[order]
-    ec_ = fc_.copy(); ec_[:, :3] = np.clip(ec_[:, :3] * 0.5, 0, 1); ec_[:, 3] = 0.3
-
-    ax.set_facecolor("#EEEEEE")
-    pc = PolyCollection(polys, closed=True)
-    pc.set_facecolor(fc_); pc.set_edgecolor(ec_); pc.set_linewidth(0.15)
-    ax.add_collection(pc)
-    ax.autoscale(); ax.set_aspect("equal"); ax.axis("off")
-    ax.set_title(title, fontsize=fontsize, fontweight="bold", pad=8)
+    """透视体素渲染 — 委托给 OccVoxelRenderer."""
+    grid = OccGrid.from_numpy(occ)
+    renderer = OccVoxelRenderer(grid, voxel_step=voxel_step)
+    renderer.render_perspective(
+        ax, heading_deg=heading_deg, elev_deg=elev_deg,
+        z_scale=z_scale, fov_deg=fov_deg,
+        title=title, fontsize=fontsize,
+    )
 
 
 def visualize_occ_4panel(occ_gt, occ_pred: np.ndarray, save_path: str,
@@ -1354,7 +1727,7 @@ def visualize_occ_4panel(occ_gt, occ_pred: np.ndarray, save_path: str,
     # --- 图例 ---
     cam_patches = [
         Patch(facecolor=info["color"], edgecolor=info["color"], alpha=0.7,
-              label=f"{name.replace('CAM_','').replace('_',' ')} "
+              label=f"{_short_cam(name).replace('_',' ')} "
                     f"[hdg={info['heading']:+.0f}° HFoV={info['hfov']:.0f}°]")
         for name, info in _CAM_INFO.items()
     ]
@@ -1364,13 +1737,8 @@ def visualize_occ_4panel(occ_gt, occ_pred: np.ndarray, save_path: str,
     all_cls: set = set(int(c) for c in occ_pred[(occ_pred != 17) & (occ_pred != 0)])
     if has_gt:
         all_cls |= set(int(c) for c in occ_gt[(occ_gt != 17) & (occ_gt != 0)])
-    cls_patches = [
-        Patch(facecolor=OCC_CLASS_COLORS.get(c, (0.5,0.5,0.5)),
-              edgecolor="k", lw=0.4,
-              label=f"{OCC_CLASS_NAMES[c] if c<len(OCC_CLASS_NAMES) else c} "
-                    f"({(occ_pred==c).sum():,})")
-        for c in sorted(all_cls)
-    ]
+    cls_patches = _make_cls_patches(occ_pred, occ_gt, with_counts=True,
+                                    count_src=occ_pred)
 
     leg1 = fig.legend(handles=cam_patches, loc="lower center",
                       ncol=len(cam_patches), fontsize=8, frameon=True,
@@ -1381,9 +1749,7 @@ def visualize_occ_4panel(occ_gt, occ_pred: np.ndarray, save_path: str,
                frameon=True, fancybox=True, bbox_to_anchor=(0.5, 0.005))
     fig.add_artist(leg1)
 
-    plt.savefig(save_path, dpi=200, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path, dpi=200, facecolor="white")
 
 
 # =====================================================================
@@ -1399,25 +1765,17 @@ def visualize_input_images(img_inputs: tuple, save_path: str):
     fig.suptitle("Input Camera Images — 6-Camera Surround View (after augmentation)",
                  fontsize=14, fontweight="bold")
 
-    cam_grid = [
-        ("CAM_FRONT_LEFT",  0, 0),
-        ("CAM_FRONT",       0, 1),
-        ("CAM_FRONT_RIGHT", 0, 2),
-        ("CAM_BACK_LEFT",   1, 0),
-        ("CAM_BACK",        1, 1),
-        ("CAM_BACK_RIGHT",  1, 2),
-    ]
     gs = GridSpec(2, 3, figure=fig, left=0.01, right=0.83,
                   hspace=0.22, wspace=0.05)
 
-    for i, (cam, row, col) in enumerate(cam_grid):
+    for i, (cam, row, col) in enumerate(_CAM_GRID):
         if i >= N: continue
         img = imgs[i]
         ax = fig.add_subplot(gs[row, col])
         ax.imshow(img)
         info = _CAM_INFO[cam]
         ax.set_title(
-            f"{cam.replace('CAM_','')}\n"
+            f"{_short_cam(cam)}\n"
             f"hdg={info['heading']:+.0f}°  HFoV={info['hfov']:.0f}°",
             fontsize=10, fontweight="bold", color=info["color"],
             bbox=dict(boxstyle="round", fc="white", ec=info["color"], alpha=0.7))
@@ -1441,9 +1799,7 @@ def visualize_input_images(img_inputs: tuple, save_path: str):
     ax_l.text(cx, 3, "▼ REAR", ha="center", va="bottom",
               color="white", fontsize=7, fontweight="bold")
 
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path)
 
 
 # =====================================================================
@@ -1464,16 +1820,39 @@ def print_occ_stats(occ: np.ndarray, tag: str = "Prediction"):
     print(f"{'='*52}\n")
 
 
-def build_output_tag(sample_idx: int, checkpoint_path: str) -> str:
-    """统一输出命名标签: s00000_<ckpt_stem>."""
-    ckpt_stem = os.path.splitext(os.path.basename(checkpoint_path))[0]
-    safe_ckpt = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in ckpt_stem)
-    return f"s{sample_idx:05d}_{safe_ckpt}"
+def build_output_tag(checkpoint_path: str, config_path: str) -> str:
+    """统一输出命名标签: {模型型号}[_ema]_{epoch}.
+
+    模型型号 从 config 文件名提取, ema/epoch 从 checkpoint 文件名解析.
+    例: config='flashocc_convnext_tiny_dinov3.py', ckpt='epoch_100_ema.pth'
+        → 'flashocc_convnext_tiny_dinov3_ema_100'
+    """
+    config_name = os.path.splitext(os.path.basename(config_path))[0]
+    ckpt_name = os.path.splitext(os.path.basename(checkpoint_path))[0]
+
+    model_type = config_name
+    is_ema = "_ema" in ckpt_name.lower()
+
+    epoch_match = re.search(r'epoch[_-]?(\d+)', ckpt_name)
+    epoch = int(epoch_match.group(1)) if epoch_match else 0
+
+    tag = model_type
+    if is_ema:
+        tag += "_ema"
+    tag += f"_{epoch}"
+    return tag
 
 
-def build_output_path(out_dir: str, tag: str, name: str) -> str:
-    """统一输出文件路径, 文件名格式: <tag>__<name>.png."""
-    return os.path.join(out_dir, f"{tag}__{name}.png")
+def build_output_path(out_dir: str, tag: str, name: str,
+                      layer_idx: int | None = None) -> str:
+    """统一输出文件路径.
+
+    文件名格式: {tag}_{name}[_{layer_idx:02d}].png
+    即: {模型型号/ema}_{epoch}_{name}[_{number of layer}].png
+    """
+    if layer_idx is not None:
+        return os.path.join(out_dir, f"{tag}_{name}_{layer_idx:02d}.png")
+    return os.path.join(out_dir, f"{tag}_{name}.png")
 
 
 def _auto_scale_hist_xy(ax, values: np.ndarray | list[np.ndarray],
@@ -1553,11 +1932,7 @@ def _render_occ_pair(
     """渲染 OCC 的等轴测+BEV 两联图; occ 为 None 时绘制占位提示."""
     if occ is None:
         for ax, ttl in ((ax_iso, iso_title), (ax_bev, bev_title)):
-            ax.axis("off")
-            ax.text(0.5, 0.5, "Ground Truth Unavailable",
-                    transform=ax.transAxes, ha="center", va="center",
-                    fontsize=16, fontweight="bold", color="gray")
-            ax.set_title(ttl, fontsize=fontsize, fontweight="bold")
+            _gt_unavailable(ax, ttl, fontsize=fontsize, text_fontsize=16)
         return
 
     _render_isometric_panel(
@@ -1578,16 +1953,8 @@ def _draw_input_images_on_spec(fig, spec, img_inputs: tuple):
     sub = GridSpecFromSubplotSpec(2, 4, subplot_spec=spec,
                                   width_ratios=[1, 1, 1, 0.95],
                                   wspace=0.06, hspace=0.18)
-    cam_grid = [
-        ("CAM_FRONT_LEFT",  0, 0),
-        ("CAM_FRONT",       0, 1),
-        ("CAM_FRONT_RIGHT", 0, 2),
-        ("CAM_BACK_LEFT",   1, 0),
-        ("CAM_BACK",        1, 1),
-        ("CAM_BACK_RIGHT",  1, 2),
-    ]
 
-    for i, (cam, row, col) in enumerate(cam_grid):
+    for i, (cam, row, col) in enumerate(_CAM_GRID):
         ax = fig.add_subplot(sub[row, col])
         ax.axis("off")
         if i >= N:
@@ -1598,7 +1965,7 @@ def _draw_input_images_on_spec(fig, spec, img_inputs: tuple):
         ax.imshow(imgs[i])
         info = _CAM_INFO[cam]
         ax.set_title(
-            f"{cam.replace('CAM_','')}  (hdg={info['heading']:+.0f}°, HFoV={info['hfov']:.0f}°)",
+            f"{_short_cam(cam)}  (hdg={info['heading']:+.0f}°, HFoV={info['hfov']:.0f}°)",
             fontsize=8.5, fontweight="bold", color=info["color"],
             bbox=dict(boxstyle="round", fc="white", ec=info["color"], alpha=0.7))
 
@@ -1646,9 +2013,7 @@ def visualize_scene_overview(img_inputs: tuple, occ_gt, occ_pred: np.ndarray,
                       draw_helpers=True, fontsize=12)
 
     fig.suptitle(title, fontsize=19, fontweight="bold", y=0.995)
-    plt.savefig(save_path, dpi=180, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path, dpi=180, facecolor="white")
 
 
 def _draw_input_cameras_compact(fig, spec, img_inputs: tuple):
@@ -1657,16 +2022,8 @@ def _draw_input_cameras_compact(fig, spec, img_inputs: tuple):
     N = imgs.shape[0]
 
     sub = GridSpecFromSubplotSpec(2, 3, subplot_spec=spec, wspace=0.04, hspace=0.12)
-    cam_grid = [
-        ("CAM_FRONT_LEFT",  0, 0),
-        ("CAM_FRONT",       0, 1),
-        ("CAM_FRONT_RIGHT", 0, 2),
-        ("CAM_BACK_LEFT",   1, 0),
-        ("CAM_BACK",        1, 1),
-        ("CAM_BACK_RIGHT",  1, 2),
-    ]
 
-    for i, (cam, row, col) in enumerate(cam_grid):
+    for i, (cam, row, col) in enumerate(_CAM_GRID):
         ax = fig.add_subplot(sub[row, col])
         ax.axis("off")
         if i >= N:
@@ -1677,7 +2034,7 @@ def _draw_input_cameras_compact(fig, spec, img_inputs: tuple):
         ax.imshow(imgs[i])
         info = _CAM_INFO[cam]
         ax.set_title(
-            f"{cam.replace('CAM_','')}",
+            f"{_short_cam(cam)}",
             fontsize=9, fontweight="bold", color=info["color"],
             bbox=dict(boxstyle="round", fc="white", ec=info["color"], alpha=0.7))
 
@@ -1753,212 +2110,24 @@ def _overlay_occ_on_camera_image(
 ):
     """将 3D 体素按立方体(6面)投影并半透明叠加到图像.
 
-    说明:
-        - 每个体素都按完整六面体处理, 绘制全部6个面
-        - 不做任何面剔除 (无朝向剔除/邻接剔除/近面裁剪)
-        - 对 z<=0 的顶点做 clamp 防止除零
-        - 统一收集所有面后一次渲染 (painter's algorithm)
+    委托给 OccVoxelRenderer.render_camera_overlay —
+    统一的投影链 + Painter's Algorithm + 离屏渲染 + 单次 alpha 叠加.
     """
     ax.imshow(img_rgb)
     if cam_params is None:
         return
-
-    step = max(int(voxel_step), 1)
-    occ_sub = occ[::step, ::step, ::step]
-    mask = (occ_sub != 17) & (occ_sub != 0)
-    if not mask.any():
+    if cam_idx >= cam_params["sensor2keyegos"].shape[0]:
         return
 
-    xi, yi, zi = np.where(mask)
-    cls_ids = occ_sub[xi, yi, zi].astype(np.int32)
-
-    # OCC 体素坐标系:
-    #   模型 prepare_inputs 计算 sensor2keyegos = inv(ego2globals[0]) @ ego2globals @ sensor2egos
-    #   view transformer 的 get_ego_coor 用 sensor2keyegos 将视锥投到 key ego 帧.
-    #   OCC 网格坐标 (x,y,z) 直接在 key ego 帧下.
-    #
-    # 投影链 (key_ego → cam → pixel):
-    #   ego2cam = inv(sensor2keyegos[cam_idx])   # key_ego → cam
-    #   p_cam = ego2cam[:3,:3] @ p_ego + ego2cam[:3,3]
-    #   (u,v) = K @ (p_cam / p_cam.z)
-    #   (u',v') = post_rot @ (u,v,1) + post_trans
-
-    if cam_params is None or cam_idx >= cam_params["sensor2keyegos"].shape[0]:
-        return
-
-    # key_ego → cam: 直接取 inv(sensor2keyegos[cam_idx])
-    sensor2keyego = cam_params["sensor2keyegos"][cam_idx]       # (4,4) cam→key_ego
-    ego2cam = np.linalg.inv(sensor2keyego.astype(np.float64)).astype(np.float32)
-    K = cam_params["intrins"][cam_idx]        # (3,3)
-    post_rot = cam_params["post_rots"][cam_idx]     # (3,3)
-    post_tran = cam_params["post_trans"][cam_idx]   # (3,)
-    voxel_size = _VS * step
-
-    H, W = img_rgb.shape[:2]
-
-    max_voxels = 22000
-    if xi.size > max_voxels:
-        keep = np.linspace(0, xi.size - 1, max_voxels, dtype=np.int32)
-        xi = xi[keep]
-        yi = yi[keep]
-        zi = zi[keep]
-        cls_ids = cls_ids[keep]
-
-    # 体素下角点 (ego)
-    x0 = _PCR[0] + xi.astype(np.float32) * voxel_size
-    y0 = _PCR[1] + yi.astype(np.float32) * voxel_size
-    z0 = _PCR[2] + zi.astype(np.float32) * voxel_size
-    origins = np.stack([x0, y0, z0], axis=1)  # (N,3)
-
-    # 8 corner offsets in [0,1]^3
-    local_corners = np.array([
-        [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
-        [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
-    ], dtype=np.float32) * voxel_size
-
-    # six faces (quad corner indices)
-    face_indices = np.array([
-        [0, 1, 2, 3],  # bottom
-        [4, 5, 6, 7],  # top
-        [0, 1, 5, 4],  # front-x
-        [3, 2, 6, 7],  # back-x
-        [0, 3, 7, 4],  # left-y
-        [1, 2, 6, 5],  # right-y
-    ], dtype=np.int32)
-    face_shades = np.array([0.62, 0.95, 0.82, 0.74, 0.78, 0.70], dtype=np.float32)
-
-    R_e2c = ego2cam[:3, :3]   # (3,3)
-    t_e2c = ego2cam[:3, 3]    # (3,)
-
-    # (N,8,3) corners in key ego frame, then to camera
-    corners_ego = origins[:, None, :] + local_corners[None, :, :]
-    corners_cam = (corners_ego.reshape(-1, 3) @ R_e2c.T + t_e2c[None, :]).reshape(corners_ego.shape)
-
-    # ---- 所有面直接投影, 不做任何面剔除 ----
-    # 对 z <= 0 的顶点做最小正值 clamp 防止除零, 不丢弃任何面.
-    near_eps = 0.01
-
-    def _project_face_cam_to_uv(face_pts_cam):
-        """(M, 4, 3) 相机坐标 → (M, 4, 2) 增广像素坐标."""
-        pts = face_pts_cam.copy()
-        pts[..., 2] = np.maximum(pts[..., 2], near_eps)
-        uvw = pts @ K.T
-        u = uvw[..., 0] / uvw[..., 2]
-        v = uvw[..., 1] / uvw[..., 2]
-        uv1 = np.stack([u, v, np.ones_like(u)], axis=-1)
-        uv_aug = uv1 @ post_rot.T + post_tran[None, None, :]
-        return uv_aug[..., :2]
-
-    polys_all = []
-    cols_all = []
-    dep_all = []
-
-    for fidx in range(face_indices.shape[0]):
-        idx4 = face_indices[fidx]
-        face_cam = corners_cam[:, idx4, :]   # (N, 4, 3)
-
-        # 至少一个顶点 z > 0 才投影 (完全在身后的面跳过)
-        any_visible = face_cam[..., 2].max(axis=1) > near_eps
-        if not any_visible.any():
-            continue
-
-        fc = face_cam[any_visible]   # (M, 4, 3)
-        cf = cls_ids[any_visible]
-
-        poly = _project_face_cam_to_uv(fc)  # (M, 4, 2)
-
-        finite = np.isfinite(poly).all(axis=(1, 2))
-        if not finite.any():
-            continue
-        poly = poly[finite]
-        cf = cf[finite]
-        fc = fc[finite]
-
-        # 视口相交检测
-        x_min = poly[..., 0].min(axis=1)
-        x_max = poly[..., 0].max(axis=1)
-        y_min = poly[..., 1].min(axis=1)
-        y_max = poly[..., 1].max(axis=1)
-        vis = (x_max >= 0) & (x_min < W) & (y_max >= 0) & (y_min < H)
-        if not vis.any():
-            continue
-
-        poly = poly[vis]
-        cf = cf[vis]
-        fc = fc[vis]
-
-        color = np.clip(_COLOR_LUT[np.clip(cf, 0, 255)] * face_shades[fidx], 0, 1)
-        depth = fc[..., 2].mean(axis=1)
-
-        polys_all.append(poly)
-        cols_all.append(color)
-        dep_all.append(depth)
-
-    if not polys_all:
-        return
-
-    polys = np.concatenate(polys_all, axis=0)
-    cols = np.concatenate(cols_all, axis=0)
-    dep = np.concatenate(dep_all, axis=0)
-
-    order = np.argsort(-dep)   # 远到近 painter
-    polys = polys[order]
-    cols = cols[order]
-
-    # 关键: 先离屏渲染完整 overlay (不透明), 再在主图只做一次 alpha 叠加
-    face_rgba = np.concatenate([
-        cols,
-        np.ones((cols.shape[0], 1), dtype=np.float32)
-    ], axis=1)
-    edge_rgba = np.concatenate([
-        np.clip(cols * 0.55, 0.0, 1.0),
-        np.ones((cols.shape[0], 1), dtype=np.float32)
-    ], axis=1)
-
-    dpi = 100
-    fig_w = max(W / dpi, 1e-3)
-    fig_h = max(H / dpi, 1e-3)
-    fig_tmp = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=(0, 0, 0, 0))
-    ax_tmp = fig_tmp.add_axes([0, 0, 1, 1])
-    ax_tmp.set_axis_off()
-    ax_tmp.set_xlim(-0.5, W - 0.5)
-    ax_tmp.set_ylim(H - 0.5, -0.5)
-    ax_tmp.set_facecolor((0, 0, 0, 0))
-
-    pc = PolyCollection(
-        polys,
-        closed=True,
-        facecolors=face_rgba,
-        edgecolors=edge_rgba,
-        linewidths=0.12,
+    cam = CameraParams(
+        sensor2keyego=cam_params["sensor2keyegos"][cam_idx],
+        intrinsics=cam_params["intrins"][cam_idx],
+        post_rot=cam_params["post_rots"][cam_idx],
+        post_trans=cam_params["post_trans"][cam_idx],
     )
-    ax_tmp.add_collection(pc)
-
-    fig_tmp.canvas.draw()
-    buf = np.asarray(fig_tmp.canvas.buffer_rgba()).astype(np.float32) / 255.0
-    plt.close(fig_tmp)
-
-    overlay_rgb = buf[..., :3]
-    overlay_a = buf[..., 3]
-    if overlay_a.max() <= 0:
-        return
-
-    # 单次全局 alpha 叠加
-    ax.imshow(overlay_rgb, alpha=overlay_a * alpha)
-
-    # 调试: 标注相机在 key ego 帧中的位置
-    try:
-        cam_pos_ego = sensor2keyego[:3, 3]   # cam→key_ego 的平移 = 相机在 key ego 中的位置
-        z_txt = (f"cam@keyego=({cam_pos_ego[0]:+.1f},"
-                 f"{cam_pos_ego[1]:+.1f},{cam_pos_ego[2]:+.1f})m")
-        ax.text(
-            0.01, 0.98, z_txt,
-            transform=ax.transAxes, ha="left", va="top",
-            fontsize=7, color="yellow",
-            bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.5),
-        )
-    except Exception:
-        pass
+    grid = OccGrid.from_numpy(occ)
+    renderer = OccVoxelRenderer(grid, voxel_step=max(int(voxel_step), 2))
+    renderer.render_camera_overlay(ax, img_rgb, cam, alpha=alpha, cam_name=cam_name)
 
 
 def visualize_combined(img_inputs: tuple, occ_gt, occ_pred: np.ndarray,
@@ -2011,7 +2180,7 @@ def visualize_combined(img_inputs: tuple, occ_gt, occ_pred: np.ndarray,
             )
             info = _CAM_INFO[cam]
             ax.set_title(
-                f"{cam.replace('CAM_','')}  (hdg={info['heading']:+.0f}°, "
+                f"{_short_cam(cam)}  (hdg={info['heading']:+.0f}°, "
                 f"HFoV={info['hfov']:.0f}°)  + OCC Overlay",
                 fontsize=9, fontweight="bold", color=info["color"],
                 bbox=dict(boxstyle="round", fc="white", ec=info["color"], alpha=0.7))
@@ -2048,37 +2217,19 @@ def visualize_combined(img_inputs: tuple, occ_gt, occ_pred: np.ndarray,
             fontsize=11,
         )
     else:
-        ax_gt_3d.axis("off")
-        ax_gt_3d.text(0.5, 0.5, "Ground Truth\nUnavailable",
-                      transform=ax_gt_3d.transAxes, ha="center", va="center",
-                      fontsize=14, fontweight="bold", color="gray")
-        ax_gt_3d.set_title("Ground Truth — 3D Isometric",
-                           fontsize=11, fontweight="bold")
-        ax_gt_bev.axis("off")
-        ax_gt_bev.text(0.5, 0.5, "Ground Truth\nUnavailable",
-                       transform=ax_gt_bev.transAxes, ha="center", va="center",
-                       fontsize=14, fontweight="bold", color="gray")
-        ax_gt_bev.set_title("Ground Truth — BEV",
-                            fontsize=11, fontweight="bold")
+        _gt_unavailable(ax_gt_3d, "Ground Truth — 3D Isometric",
+                        fontsize=11, text_fontsize=14)
+        _gt_unavailable(ax_gt_bev, "Ground Truth — BEV",
+                        fontsize=11, text_fontsize=14)
 
     # ---- 类别图例 ----
-    all_cls: set = set(int(c) for c in occ_pred[(occ_pred != 17) & (occ_pred != 0)])
-    if has_gt:
-        all_cls |= set(int(c) for c in occ_gt[(occ_gt != 17) & (occ_gt != 0)])
-    cls_patches = [
-        Patch(facecolor=OCC_CLASS_COLORS.get(c, (0.5, 0.5, 0.5)),
-              edgecolor="k", lw=0.4,
-              label=f"{OCC_CLASS_NAMES[c] if c < len(OCC_CLASS_NAMES) else c}")
-        for c in sorted(all_cls)
-    ]
+    cls_patches = _make_cls_patches(occ_pred, occ_gt)
     if cls_patches:
         fig.legend(handles=cls_patches, loc="lower center",
                    ncol=min(10, len(cls_patches)), fontsize=8,
                    frameon=True, fancybox=True, bbox_to_anchor=(0.5, 0.005))
 
-    plt.savefig(save_path, dpi=180, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path, dpi=180, facecolor="white")
 
 
 def visualize_bev_diff_heatmap(occ_gt: np.ndarray, occ_pred: np.ndarray,
@@ -2183,9 +2334,7 @@ def visualize_bev_diff_heatmap(occ_gt: np.ndarray, occ_pred: np.ndarray,
         ha="center", fontsize=9, fontfamily="monospace",
         bbox=dict(boxstyle="round", fc="lightyellow", ec="gray", alpha=0.8))
 
-    plt.savefig(save_path, dpi=180, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    print(f"  → 已保存: {save_path}")
+    _save_figure(fig, save_path, dpi=180, facecolor="white")
 
 
 def _get_batch_by_index(data_loader, sample_idx: int):
@@ -2339,7 +2488,7 @@ def main():
     args = parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     device = torch.device(args.device)
-    out_tag = build_output_tag(args.sample_idx, args.checkpoint)
+    out_tag = build_output_tag(args.checkpoint, args.config)
 
     print("=" * 65)
     print("  FlashOCC 可视化工具  v2  (重新设计版)")
@@ -2396,7 +2545,7 @@ def main():
                       f"type={layer_type}  shape={list(feat.shape)}")
                 safe = (name.replace(" ","_").replace("/","_")
                            .replace("(","").replace(")","").replace(".","_"))
-                sp = build_output_path(args.out_dir, out_tag, f"feat_{idx+1:02d}_{safe}")
+                sp = build_output_path(args.out_dir, out_tag, safe, layer_idx=idx+1)
                 try:
                     if layer_type == "multicam":
                         visualize_multicam_features(feat, name, sp, n_cams=6)
@@ -2428,14 +2577,19 @@ def main():
                     import traceback; traceback.print_exc()
                     print(f"    [跳过] LSS depth 2D: {e}")
 
-                sp_d3d = build_output_path(args.out_dir, out_tag, "lss_depth_3d")
-                try:
-                    visualize_lss_depth_3d_perspective(
-                        extractor.depth, vis_in, sp_d3d,
-                        depth_cfg=depth_cfg, n_cams=6)
-                except Exception as e:
-                    import traceback; traceback.print_exc()
-                    print(f"    [跳过] LSS depth 3D: {e}")
+                # ---- LSS 深度 3D 综合可视化 (点云 + 误差 + 曲面) ----
+                lidar_ego = _load_lidar_points_ego(dataset, args.sample_idx)
+                if lidar_ego is not None:
+                    sp_d3d = build_output_path(args.out_dir, out_tag, "lss_depth_3d")
+                    try:
+                        visualize_lss_depth_3d(
+                            extractor.depth, vis_in, lidar_ego, sp_d3d,
+                            depth_cfg=depth_cfg, n_cams=6)
+                    except Exception as e:
+                        import traceback; traceback.print_exc()
+                        print(f"    [跳过] LSS depth 3D: {e}")
+                else:
+                    print("  [注意] 无法加载 LiDAR 点云, 跳过 LSS depth 3D")
             else:
                 print("  [注意] 未捕获到 LSS 深度, 跳过深度可视化")
         finally:

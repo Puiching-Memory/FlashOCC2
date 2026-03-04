@@ -466,7 +466,8 @@ def train_model(experiment, model, mesh=None, validate=False,
                 swanlab_run.log(epoch_metrics, step=global_iter)
 
         # 保存 checkpoint（仅主进程写盘，避免多 rank 竞争同一文件）
-        if is_main_process:
+        ckpt_interval = getattr(exp, 'checkpoint_interval', 1)
+        if is_main_process and (epoch + 1) % ckpt_interval == 0:
             ckpt_path = os.path.join(work_dir, f"epoch_{epoch+1}.pth")
             raw_model = model.module if hasattr(model, "module") else model
             state = {
@@ -492,16 +493,21 @@ def train_model(experiment, model, mesh=None, validate=False,
             max_keep = getattr(exp, 'max_keep_ckpts', -1)
             if max_keep > 0:
                 import glob as _glob
-                ckpt_files = sorted(
+                all_pth = sorted(
                     _glob.glob(os.path.join(work_dir, "epoch_*.pth")),
                     key=os.path.getmtime,
                 )
-                # 排除 EMA checkpoint (epoch_*_ema.pth)
-                ckpt_files = [f for f in ckpt_files if not f.endswith("_ema.pth")]
+                # 分离 regular 和 EMA checkpoint
+                ckpt_files = [f for f in all_pth if not f.endswith("_ema.pth")]
                 while len(ckpt_files) > max_keep:
                     old = ckpt_files.pop(0)
                     os.remove(old)
                     logger.info(f"已删除旧 checkpoint: {old}")
+                    # 同时删除对应的 EMA checkpoint
+                    ema_counterpart = old.replace(".pth", "_ema.pth")
+                    if os.path.isfile(ema_counterpart):
+                        os.remove(ema_counterpart)
+                        logger.info(f"已删除旧 EMA checkpoint: {ema_counterpart}")
 
         # epoch 级同步，防止 rank 间进度漂移
         if distributed and dist.is_available() and dist.is_initialized():

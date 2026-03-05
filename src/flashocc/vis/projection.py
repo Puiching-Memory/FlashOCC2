@@ -122,6 +122,7 @@ class PerspectiveProjection(Projection):
     z_scale: float = 1.5
     fov_deg: float = 90.0
     ego_height_m: float = 1.5
+    eye_back_m: float = 0.0
     pcr_z_min: float = -1.0
     pcr_z_max: float = 5.4
     near_clip: float = 0.8
@@ -132,6 +133,14 @@ class PerspectiveProjection(Projection):
         Dx, Dy, Dz = self.grid_shape
         ego_z_frac = (self.ego_height_m - self.pcr_z_min) / (self.pcr_z_max - self.pcr_z_min)
         ego = np.array([Dx / 2.0, Dy / 2.0, ego_z_frac * Dz * self.z_scale])
+
+        # 沿 heading 反方向平移 eye_back_m (使相机后退, 可看到自车)
+        if abs(self.eye_back_m) > 1e-6:
+            heading_rad = np.radians(self.heading_deg)
+            voxel_size_xy = (self.pcr_z_max - self.pcr_z_min) / Dz  # 各向同性
+            back_vox = self.eye_back_m / voxel_size_xy
+            ego[0] -= np.cos(heading_rad) * back_vox
+            ego[1] -= np.sin(heading_rad) * back_vox
 
         heading = np.radians(self.heading_deg)
         elev = np.radians(self.elev_deg)
@@ -157,8 +166,10 @@ class PerspectiveProjection(Projection):
         v_rel = verts_3d - ego[None, None, :]
         v_cam = np.einsum("nvi,ji->nvj", v_rel, R)
 
-        # 透视除法 (clamp near)
-        depth_safe = np.maximum(v_cam[..., 2], self.near_clip)
+        # 透视除法: 对 near plane 后方顶点直接置 NaN, 避免拉伸伪影.
+        depth = v_cam[..., 2]
+        valid = depth > self.near_clip
+        depth_safe = np.where(valid, depth, np.nan)
         x_proj = v_cam[..., 0] * focal / depth_safe
         y_proj = v_cam[..., 1] * focal / depth_safe
 
@@ -176,7 +187,8 @@ class PerspectiveProjection(Projection):
     ) -> np.ndarray:
         finite = np.isfinite(polys_2d).all(axis=(1, 2))
         bounded = np.abs(polys_2d).max(axis=(1, 2)) < self.proj_limit
-        return finite & bounded
+        positive_depth = depth > self.near_clip
+        return finite & bounded & positive_depth
 
 
 # =====================================================================

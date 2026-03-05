@@ -46,6 +46,7 @@ from collections import OrderedDict
 from typing import Any
 
 import numpy as np
+import cv2
 import torch
 import torch.nn as nn
 import matplotlib
@@ -78,6 +79,7 @@ from flashocc.vis import (
     build_class_legend,
     build_cam_legend_patches,
     CameraParams,
+    PerspectiveProjection,
     CAM_ORDER as _CAM_ORDER,
     CAM_INFO as _CAM_INFO,
     ZOE_LENGTH as _ZOE_LENGTH,
@@ -180,6 +182,76 @@ def _save_figure(fig, path: str, dpi: int = 150, facecolor=None):
     plt.savefig(path, **kw)
     plt.close(fig)
     print(f"  → 已保存: {path}")
+
+
+def _save_cv2_image(path: str, img_bgr: np.ndarray):
+    """使用 OpenCV 直接保存图片并打印路径."""
+    ok = cv2.imwrite(path, img_bgr)
+    if not ok:
+        raise RuntimeError(f"Failed to save image: {path}")
+    print(f"  → 已保存: {path}")
+
+
+def _rgb01_to_bgr8(img_rgb: np.ndarray) -> np.ndarray:
+    """[0,1] RGB 或 uint8 RGB → uint8 BGR."""
+    arr = np.asarray(img_rgb)
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    return arr[..., ::-1].copy()
+
+
+def _fit_to_panel(img_bgr: np.ndarray, panel_h: int, panel_w: int,
+                  bg_color: tuple[int, int, int] = (245, 245, 245)) -> np.ndarray:
+    """保持宽高比缩放并居中到固定 panel 尺寸."""
+    canvas = np.full((panel_h, panel_w, 3), bg_color, dtype=np.uint8)
+    h, w = img_bgr.shape[:2]
+    if h <= 0 or w <= 0:
+        return canvas
+
+    scale = min(panel_w / w, panel_h / h)
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=interp)
+
+    x0 = (panel_w - new_w) // 2
+    y0 = (panel_h - new_h) // 2
+    canvas[y0:y0 + new_h, x0:x0 + new_w] = resized
+    return canvas
+
+
+def _hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
+    """#RRGGBB -> (B,G,R)."""
+    hc = hex_color.lstrip("#")
+    if len(hc) != 6:
+        return (220, 220, 220)
+    r = int(hc[0:2], 16)
+    g = int(hc[2:4], 16)
+    b = int(hc[4:6], 16)
+    return (b, g, r)
+
+
+def _annotate_panel(img_bgr: np.ndarray, text: str,
+                    color_bgr: tuple[int, int, int] = (20, 20, 20)):
+    """在面板左上角绘制标题条."""
+    out = img_bgr.copy()
+    cv2.rectangle(out, (6, 6), (max(120, 14 + len(text) * 8), 28),
+                  (255, 255, 255), thickness=-1)
+    cv2.rectangle(out, (6, 6), (max(120, 14 + len(text) * 8), 28),
+                  color_bgr, thickness=1)
+    cv2.putText(out, text, (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                color_bgr, 1, cv2.LINE_AA)
+    return out
+
+
+def _unavailable_panel(h: int, w: int, title: str) -> np.ndarray:
+    """GT 不可用占位图."""
+    img = np.full((h, w, 3), (245, 245, 245), dtype=np.uint8)
+    cv2.putText(img, title, (24, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                (80, 80, 80), 2, cv2.LINE_AA)
+    cv2.putText(img, "Ground Truth Unavailable", (24, h // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.95, (120, 120, 120), 2, cv2.LINE_AA)
+    return img
 
 
 def _gt_unavailable(ax, title: str, fontsize: int = 14, text_fontsize: int = 16):
@@ -467,7 +539,7 @@ def visualize_lss_depth_2d(
     save_path: str,
     depth_cfg: tuple = (1.0, 45.0, 0.5),
     n_cams: int = 6,
-    title: str = "LSS Depth Prediction — 2D Heatmap",
+    title: str = "LSS Depth Prediction - 2D Heatmap",
 ):
     """将 LSS 预测的深度分布投影回 2D 热力图叠加到输入图像上.
 
@@ -540,7 +612,7 @@ def visualize_lss_depth_2d(
                        vmin=d_min, vmax=d_max)
         plt.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="depth (m)")
         cam_name = _CAM_ORDER[idx]
-        ax.set_title(f"{_short_cam(cam_name)} — E[depth]",
+        ax.set_title(f"{_short_cam(cam_name)} - E[depth]",
                      fontsize=9, fontweight="bold", color=cam_colors[idx])
         ax.axis("off")
 
@@ -560,7 +632,7 @@ def visualize_lss_depth_2d(
         plt.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="prob")
         ax.set_xlabel("fW pixel", fontsize=8)
         ax.set_ylabel("depth (m)", fontsize=8)
-        ax.set_title(f"{_short_cam(cam_name)} — depth dist (row={mid_h})",
+        ax.set_title(f"{_short_cam(cam_name)} - depth dist (row={mid_h})",
                      fontsize=9, fontweight="bold", color=cam_colors[idx])
 
         # 叠加 argmax 线
@@ -608,7 +680,7 @@ def visualize_lss_depth_3d_perspective(
     depth_cfg: tuple = (1.0, 45.0, 0.5),
     n_cams: int = 6,
     input_size: tuple = (256, 704),
-    title: str = "LSS Depth — 3D Ego Space",
+    title: str = "LSS Depth - 3D Ego Space",
 ):
     """将 LSS 期望深度投影到 3D ego 空间，按相机着色，绘制距离辅助圆环.
 
@@ -675,8 +747,8 @@ def visualize_lss_depth_3d_perspective(
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     ax.set_zlim(-4, 8)
-    ax.set_xlabel("X / m  (front →)", color="white", fontsize=9, labelpad=8)
-    ax.set_ylabel("Y / m  (← left)", color="white", fontsize=9, labelpad=8)
+    ax.set_xlabel("X / m  (front +)", color="white", fontsize=9, labelpad=8)
+    ax.set_ylabel("Y / m  (left +)", color="white", fontsize=9, labelpad=8)
     ax.set_zlabel("Z / m  (up)", color="white", fontsize=9, labelpad=8)
     ax.view_init(elev=55, azim=-90)
 
@@ -808,8 +880,8 @@ def _style_3d_ax(ax, title: str, lim: int = 48):
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     ax.set_zlim(-4, 8)
-    ax.set_xlabel("X / m  (front →)", color="white", fontsize=8, labelpad=6)
-    ax.set_ylabel("Y / m  (← left)", color="white", fontsize=8, labelpad=6)
+    ax.set_xlabel("X / m  (front +)", color="white", fontsize=8, labelpad=6)
+    ax.set_ylabel("Y / m  (left +)", color="white", fontsize=8, labelpad=6)
     ax.set_zlabel("Z / m  (up)", color="white", fontsize=8, labelpad=6)
     ax.view_init(elev=55, azim=-90)
     ax.tick_params(colors="white", labelsize=6)
@@ -1140,7 +1212,7 @@ def visualize_lss_depth_3d(
             if idx == 2:
                 cbar = plt.colorbar(sc, ax=ax, fraction=0.03, pad=0.01,
                                     shrink=0.8)
-                cbar.set_label("Ray depth error |pred−gt| (m)",
+                cbar.set_label("Ray depth error |pred-gt| (m)",
                                fontsize=8, color="white")
                 cbar.ax.tick_params(colors="white", labelsize=6)
 
@@ -1189,9 +1261,9 @@ def visualize_lss_depth_3d(
         [d_lo, d_hi], [d_lo * 0.8, d_hi * 0.8], [d_lo * 1.2, d_hi * 1.2],
         color="cyan", alpha=0.06, label="±20% band")
 
-    ax_scatter.set_xlabel("GT Depth (m) — LiDAR z_cam along camera ray",
+    ax_scatter.set_xlabel("GT Depth (m) - LiDAR z_cam along camera ray",
                           fontsize=10, color="white")
-    ax_scatter.set_ylabel("Predicted Depth (m) — LSS E[d]",
+    ax_scatter.set_ylabel("Predicted Depth (m) - LSS E[d]",
                           fontsize=10, color="white")
     ax_scatter.set_title("Predicted vs Ground Truth Depth (ray-aligned)",
                          fontsize=12, fontweight="bold", color="white", pad=10)
@@ -1262,7 +1334,7 @@ def visualize_lss_depth_3d(
     ax_bar.set_xticklabels(cam_labels, fontsize=8, color="white")
     ax_bar.set_ylabel("Ray-Aligned Depth Error (m)", fontsize=9, color="white")
     ax_bar.set_title("Per-Camera Ray-Aligned Depth Error\n"
-                     "(|LSS E[d] − LiDAR z_cam| at matched pixels)",
+                     "(|LSS E[d] - LiDAR z_cam| at matched pixels)",
                      fontsize=11, fontweight="bold", color="white", pad=10)
     ax_bar.tick_params(colors="white", labelsize=7)
     ax_bar.spines["top"].set_visible(False)
@@ -1327,12 +1399,12 @@ def visualize_lss_depth_3d(
                     (means_arr + stds_arr)[valid],
                     color=color, alpha=0.08)
 
-    ax_curve.set_xlabel("GT Depth (m) — distance along camera ray",
+    ax_curve.set_xlabel("GT Depth (m) - distance along camera ray",
                         fontsize=9, color="white")
-    ax_curve.set_ylabel("Mean |Pred − GT| Depth Error (m)",
+    ax_curve.set_ylabel("Mean |Pred - GT| Depth Error (m)",
                         fontsize=9, color="white")
     ax_curve.set_title("Ray-Aligned Depth Error vs. GT Distance\n"
-                       "(X = LiDAR z_cam,  Y = |E[d] − z_cam|)",
+                       "(X = LiDAR z_cam,  Y = |E[d] - z_cam|)",
                        fontsize=11, fontweight="bold", color="white", pad=10)
     ax_curve.tick_params(colors="white", labelsize=7)
     ax_curve.spines["top"].set_visible(False)
@@ -1669,6 +1741,7 @@ def _render_isometric_panel(ax, occ: np.ndarray, voxel_step=2,
 def _render_perspective_panel(ax, occ: np.ndarray, voxel_step=2,
                               heading_deg=0.0, elev_deg=8.0,
                               z_scale=1.5, fov_deg=90.0,
+                              ego_height_m=1.5, eye_back_m=0.0,
                               title="3D Perspective", fontsize=11):
     """透视体素渲染 — 委托给 OccVoxelRenderer."""
     grid = OccGrid.from_numpy(occ)
@@ -1676,6 +1749,7 @@ def _render_perspective_panel(ax, occ: np.ndarray, voxel_step=2,
     renderer.render_perspective(
         ax, heading_deg=heading_deg, elev_deg=elev_deg,
         z_scale=z_scale, fov_deg=fov_deg,
+        ego_height_m=ego_height_m, eye_back_m=eye_back_m,
         title=title, fontsize=fontsize,
     )
 
@@ -1732,7 +1806,7 @@ def visualize_occ_4panel(occ_gt, occ_pred: np.ndarray, save_path: str,
         for name, info in _CAM_INFO.items()
     ]
     cam_patches.append(Patch(facecolor="#1E90FF", alpha=0.35, edgecolor="#1E90FF",
-                             label="Ego — Renault Zoé (4.084m×1.73m, wb=2.588m)"))
+                             label="Ego - Renault Zoe (4.084m x 1.73m, wb=2.588m)"))
 
     all_cls: set = set(int(c) for c in occ_pred[(occ_pred != 17) & (occ_pred != 0)])
     if has_gt:
@@ -1762,7 +1836,7 @@ def visualize_input_images(img_inputs: tuple, save_path: str):
     N = imgs.shape[0]
 
     fig = plt.figure(figsize=(22, 9))
-    fig.suptitle("Input Camera Images — 6-Camera Surround View (after augmentation)",
+    fig.suptitle("Input Camera Images - 6-Camera Surround View (after augmentation)",
                  fontsize=14, fontweight="bold")
 
     gs = GridSpec(2, 3, figure=fig, left=0.01, right=0.83,
@@ -1781,7 +1855,7 @@ def visualize_input_images(img_inputs: tuple, save_path: str):
             bbox=dict(boxstyle="round", fc="white", ec=info["color"], alpha=0.7))
         ax.axis("off")
         h, w = img.shape[:2]
-        ax.text(4, h-4, f"{w}×{h}px", fontsize=7, color="white", va="bottom",
+        ax.text(4, h-4, f"{w}x{h}px", fontsize=7, color="white", va="bottom",
                 bbox=dict(boxstyle="round,pad=0.15", fc="black", alpha=0.5))
 
     # 右侧BEV布局示意
@@ -1794,9 +1868,9 @@ def visualize_input_images(img_inputs: tuple, save_path: str):
     draw_camera_fovs(ax_l, alpha_fill=0.13, alpha_line=0.9)
     draw_ego_vehicle(ax_l, color="#E0E0FF", linewidth=2.5)
     cx, cy = world_to_bev_px(0, 0)
-    ax_l.text(cx, _DX-3, "▲ FRONT", ha="center", va="top",
+    ax_l.text(cx, _DX-3, "FRONT", ha="center", va="top",
               color="white", fontsize=7, fontweight="bold")
-    ax_l.text(cx, 3, "▼ REAR", ha="center", va="bottom",
+    ax_l.text(cx, 3, "REAR", ha="center", va="bottom",
               color="white", fontsize=7, fontweight="bold")
 
     _save_figure(fig, save_path)
@@ -2142,94 +2216,267 @@ def visualize_combined(img_inputs: tuple, occ_gt, occ_pred: np.ndarray,
       Row 2: 预测等轴测 | 预测BEV | 真值等轴测 | 真值BEV  (1×4)
     """
     has_gt = occ_gt is not None
-
-    fig = plt.figure(figsize=(30, 22), facecolor="white")
-    fig.suptitle(title, fontsize=17, fontweight="bold", y=0.998)
-
-    gs_main = GridSpec(3, 1, figure=fig,
-                       height_ratios=[0.48, 0.48, 0.94],
-                       hspace=0.035,
-                       top=0.976, bottom=0.03, left=0.02, right=0.98)
-
-    # ---- 图像解码 ----
     imgs = _decode_input_images_to_bgr01(img_inputs)
     N = imgs.shape[0]
     cam_params = _extract_cam_params_from_img_inputs(img_inputs)
 
-    front_cams = [("CAM_FRONT_LEFT", 0), ("CAM_FRONT", 1), ("CAM_FRONT_RIGHT", 2)]
-    back_cams  = [("CAM_BACK_LEFT", 3), ("CAM_BACK", 4), ("CAM_BACK_RIGHT", 5)]
+    pred_renderer = OccVoxelRenderer(
+        OccGrid.from_numpy(occ_pred), voxel_step=max(int(voxel_step), 1))
 
-    def _draw_cam_row(spec, cam_list):
-        """在给定 SubplotSpec 内绘制一行相机图像 + 体素叠加 (1×3)."""
-        gs = GridSpecFromSubplotSpec(1, 3, subplot_spec=spec, wspace=0.03)
-        for col_idx, (cam, cam_idx) in enumerate(cam_list):
-            ax = fig.add_subplot(gs[0, col_idx])
-            ax.axis("off")
-            if cam_idx >= N:
-                continue
-            _overlay_occ_on_camera_image(
-                ax,
-                imgs[cam_idx],
-                occ_pred,
-                cam_params,
-                scene_info,
-                cam_name=cam,
-                cam_idx=cam_idx,
-                voxel_step=max(voxel_step, 2),
-                alpha=0.5,
-            )
-            info = _CAM_INFO[cam]
-            ax.set_title(
-                f"{_short_cam(cam)}  (hdg={info['heading']:+.0f}°, "
-                f"HFoV={info['hfov']:.0f}°)  + OCC Overlay",
-                fontsize=9, fontweight="bold", color=info["color"],
-                bbox=dict(boxstyle="round", fc="white", ec=info["color"], alpha=0.7))
+    H_img, W_img = imgs.shape[1], imgs.shape[2]
+    gap = 16
+    margin = 22
+    row_h = H_img
+    row_w = W_img * 3 + gap * 2
+    canvas_w = row_w + margin * 2
 
-    # Row 0: 前方相机输入
-    _draw_cam_row(gs_main[0], front_cams)
-    # Row 1: 后方相机输入
-    _draw_cam_row(gs_main[1], back_cams)
+    bot_panel_w = (canvas_w - margin * 2 - gap * 3) // 4
+    bot_panel_h = int(bot_panel_w * 0.75)
 
-    # ================================================================
-    #  Row 2: 预测等轴测 | 预测BEV | 真值等轴测 | 真值BEV (1×4)
-    # ================================================================
-    gs_bot = GridSpecFromSubplotSpec(1, 4, subplot_spec=gs_main[2],
-                                     wspace=0.06)
+    title_h = 46
+    canvas_h = margin * 2 + title_h + row_h * 2 + gap * 2 + bot_panel_h
+    canvas = np.full((canvas_h, canvas_w, 3), (246, 246, 246), dtype=np.uint8)
 
-    ax_pred_3d = fig.add_subplot(gs_bot[0])
-    _render_isometric_panel(
-        ax_pred_3d, occ_pred, voxel_step=max(voxel_step, 1),
-        azim_deg=45.0, elev_deg=35.0, z_scale=2.5,
-        title="Prediction — 3D Isometric", fontsize=11)
+    cv2.putText(canvas, title, (margin, margin + 30), cv2.FONT_HERSHEY_SIMPLEX,
+                1.0, (20, 20, 20), 2, cv2.LINE_AA)
 
-    ax_pred_bev = fig.add_subplot(gs_bot[1])
-    _render_bev_panel(ax_pred_bev, occ_pred,
-                      title="Prediction — BEV",
-                      draw_helpers=True, fontsize=11)
-
-    ax_gt_3d = fig.add_subplot(gs_bot[2])
-    ax_gt_bev = fig.add_subplot(gs_bot[3])
-    if has_gt:
-        _render_occ_pair(
-            ax_gt_3d, ax_gt_bev, occ_gt, voxel_step,
-            iso_title="Ground Truth — 3D Isometric",
-            bev_title="Ground Truth — BEV",
-            fontsize=11,
+    def _cam_overlay(cam_name: str, cam_idx: int) -> np.ndarray:
+        if cam_idx >= N:
+            return np.zeros((H_img, W_img, 3), dtype=np.uint8)
+        if cam_params is None or cam_idx >= cam_params["sensor2keyegos"].shape[0]:
+            return _rgb01_to_bgr8(imgs[cam_idx])
+        cam = CameraParams(
+            sensor2keyego=cam_params["sensor2keyegos"][cam_idx],
+            intrinsics=cam_params["intrins"][cam_idx],
+            post_rot=cam_params["post_rots"][cam_idx],
+            post_trans=cam_params["post_trans"][cam_idx],
         )
+        img = pred_renderer.render_camera_overlay_image(
+            imgs[cam_idx], cam, alpha=0.5, cam_name="")
+        info = _CAM_INFO[cam_name]
+        return _annotate_panel(img, _short_cam(cam_name), _hex_to_bgr(info["color"]))
+
+    cam_rows = [
+        [("CAM_FRONT_LEFT", 0), ("CAM_FRONT", 1), ("CAM_FRONT_RIGHT", 2)],
+        [("CAM_BACK_LEFT", 3), ("CAM_BACK", 4), ("CAM_BACK_RIGHT", 5)],
+    ]
+
+    y = margin + title_h
+    for row in cam_rows:
+        x = margin
+        for cam_name, cam_idx in row:
+            tile = _cam_overlay(cam_name, cam_idx)
+            canvas[y:y + row_h, x:x + W_img] = tile
+            x += W_img + gap
+        y += row_h + gap
+
+    pred_iso = pred_renderer.render_isometric_image(
+        azim_deg=45.0, elev_deg=35.0, z_scale=2.5,
+        width=max(bot_panel_w, 640), height=max(bot_panel_h, 480),
+    )
+    pred_iso = _annotate_panel(_fit_to_panel(pred_iso, bot_panel_h, bot_panel_w),
+                               "Prediction - 3D Isometric")
+
+    pred_bev = pred_renderer.render_bev_image(draw_helpers=True, scale=4)
+    pred_bev = _annotate_panel(_fit_to_panel(pred_bev, bot_panel_h, bot_panel_w),
+                               "Prediction - BEV")
+
+    if has_gt:
+        gt_renderer = OccVoxelRenderer(
+            OccGrid.from_numpy(occ_gt), voxel_step=max(int(voxel_step), 1))
+        gt_iso = gt_renderer.render_isometric_image(
+            azim_deg=45.0, elev_deg=35.0, z_scale=2.5,
+            width=max(bot_panel_w, 640), height=max(bot_panel_h, 480),
+        )
+        gt_bev = gt_renderer.render_bev_image(draw_helpers=True, scale=4)
+        gt_iso = _annotate_panel(_fit_to_panel(gt_iso, bot_panel_h, bot_panel_w),
+                                 "Ground Truth - 3D Isometric")
+        gt_bev = _annotate_panel(_fit_to_panel(gt_bev, bot_panel_h, bot_panel_w),
+                                 "Ground Truth - BEV")
     else:
-        _gt_unavailable(ax_gt_3d, "Ground Truth — 3D Isometric",
-                        fontsize=11, text_fontsize=14)
-        _gt_unavailable(ax_gt_bev, "Ground Truth — BEV",
-                        fontsize=11, text_fontsize=14)
+        gt_iso = _unavailable_panel(bot_panel_h, bot_panel_w, "Ground Truth - 3D")
+        gt_bev = _unavailable_panel(bot_panel_h, bot_panel_w, "Ground Truth - BEV")
 
-    # ---- 类别图例 ----
-    cls_patches = _make_cls_patches(occ_pred, occ_gt)
-    if cls_patches:
-        fig.legend(handles=cls_patches, loc="lower center",
-                   ncol=min(10, len(cls_patches)), fontsize=8,
-                   frameon=True, fancybox=True, bbox_to_anchor=(0.5, 0.005))
+    panels = [pred_iso, pred_bev, gt_iso, gt_bev]
+    x = margin
+    y_bot = canvas_h - margin - bot_panel_h
+    for p in panels:
+        canvas[y_bot:y_bot + bot_panel_h, x:x + bot_panel_w] = p
+        x += bot_panel_w + gap
 
-    _save_figure(fig, save_path, dpi=180, facecolor="white")
+    _save_cv2_image(save_path, canvas)
+
+
+def _draw_ego_3d_box_perspective(ax, grid_shape, heading_deg, elev_deg,
+                                  z_scale, fov_deg, ego_height_m,
+                                  eye_back_m, pcr_z_min, pcr_z_max):
+    """在透视图上绘制自车 3D 线框包围盒."""
+    vs = _VS
+    # 自车在世界坐标 (x=前, y=左) 中的 8 个角点
+    # 后轴在车身中心偏后 ~0.748m, 这里简化为中心对齐
+    half_l = _ZOE_LENGTH / 2.0
+    half_w = _ZOE_WIDTH / 2.0
+    z_bot = 0.0           # 地面
+    z_top = 1.56          # 车顶约 1.56m
+
+    # 世界坐标 8 角点
+    corners_world = np.array([
+        [-half_l, -half_w, z_bot],
+        [ half_l, -half_w, z_bot],
+        [ half_l,  half_w, z_bot],
+        [-half_l,  half_w, z_bot],
+        [-half_l, -half_w, z_top],
+        [ half_l, -half_w, z_top],
+        [ half_l,  half_w, z_top],
+        [-half_l,  half_w, z_top],
+    ])  # (8, 3)
+
+    # 世界 → 体素坐标
+    corners_vox = np.empty_like(corners_world)
+    corners_vox[:, 0] = (corners_world[:, 0] - _PCR[0]) / vs
+    corners_vox[:, 1] = (corners_world[:, 1] - _PCR[1]) / vs
+    corners_vox[:, 2] = (corners_world[:, 2] - pcr_z_min) / vs * z_scale
+
+    proj = PerspectiveProjection(
+        grid_shape=grid_shape,
+        heading_deg=heading_deg,
+        elev_deg=elev_deg,
+        z_scale=z_scale,
+        fov_deg=fov_deg,
+        ego_height_m=ego_height_m,
+        eye_back_m=eye_back_m,
+        pcr_z_min=pcr_z_min,
+        pcr_z_max=pcr_z_max,
+    )
+
+    # 投影: project 期望 (N_faces, N_verts, 3) → (N_faces, N_verts, 2)
+    # 包装成 (1, 8, 3) 来投影全部角点
+    pts_2d = proj.project(corners_vox[None, :, :])  # (1, 8, 2)
+    pts_2d = pts_2d[0]  # (8, 2)
+
+    if not np.isfinite(pts_2d).all():
+        return
+
+    # 12 条边
+    edges = [
+        (0,1),(1,2),(2,3),(3,0),  # 底面
+        (4,5),(5,6),(6,7),(7,4),  # 顶面
+        (0,4),(1,5),(2,6),(3,7),  # 垂直边
+    ]
+    for i, j in edges:
+        ax.plot([pts_2d[i,0], pts_2d[j,0]],
+                [pts_2d[i,1], pts_2d[j,1]],
+                color="#1E90FF", linewidth=2.0, alpha=0.9, zorder=50)
+
+    # 标注
+    cx = pts_2d[:, 0].mean()
+    cy = pts_2d[:, 1].min() - 0.05
+    ax.text(cx, cy, "EGO", ha="center", va="bottom",
+            fontsize=8, fontweight="bold", color="#1E90FF",
+            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#1E90FF", alpha=0.8),
+            zorder=51)
+
+
+def visualize_poster(img_inputs: tuple, occ_pred: np.ndarray,
+                     cam_params: dict | None,
+                     save_path: str, voxel_step: int = 1,
+                     title: str = "FlashOCC - Poster Overview"):
+    """海报风格 2×2 可视化.
+
+    布局:
+        ┌─────────────────┬─────────────────┐
+        │  6相机原图 (2×3)  │ 6相机OCC体素(2×3) │
+        ├─────────────────┼─────────────────┤
+        │  3D透视(自车上方) │  BEV鸟瞰图       │
+        └─────────────────┴─────────────────┘
+    """
+    imgs = _decode_input_images_to_bgr01(img_inputs)
+    N = imgs.shape[0]
+    H_img, W_img = imgs.shape[1], imgs.shape[2]
+
+    renderer = OccVoxelRenderer(
+        OccGrid.from_numpy(occ_pred), voxel_step=max(int(voxel_step), 1))
+
+    gap = 16
+    margin = 24
+    tile_h = H_img
+    tile_w = W_img
+    half_w = tile_w * 3 + gap * 2
+    top_h = tile_h * 2 + gap
+
+    bottom_h = int(half_w * 0.62)
+    title_h = 50
+    canvas_w = margin * 2 + half_w * 2 + gap
+    canvas_h = margin * 2 + title_h + top_h + gap + bottom_h
+    canvas = np.full((canvas_h, canvas_w, 3), (246, 246, 246), dtype=np.uint8)
+
+    cv2.putText(canvas, title, (margin, margin + 32), cv2.FONT_HERSHEY_SIMPLEX,
+                1.0, (20, 20, 20), 2, cv2.LINE_AA)
+
+    def _camera_grid(overlay_only: bool) -> np.ndarray:
+        out = np.full((top_h, half_w, 3), (255, 255, 255) if overlay_only else (245, 245, 245), dtype=np.uint8)
+        white_rgb = np.ones((H_img, W_img, 3), dtype=np.float32)
+        for idx, (cam, row, col) in enumerate(_CAM_GRID):
+            x = col * (tile_w + gap)
+            y = row * (tile_h + gap)
+            if idx >= N:
+                continue
+
+            if not overlay_only:
+                tile = _rgb01_to_bgr8(imgs[idx])
+            else:
+                if cam_params is None or idx >= cam_params["sensor2keyegos"].shape[0]:
+                    tile = np.zeros((H_img, W_img, 3), dtype=np.uint8)
+                else:
+                    cam_obj = CameraParams(
+                        sensor2keyego=cam_params["sensor2keyegos"][idx],
+                        intrinsics=cam_params["intrins"][idx],
+                        post_rot=cam_params["post_rots"][idx],
+                        post_trans=cam_params["post_trans"][idx],
+                    )
+                    tile = renderer.render_camera_overlay_image(
+                        white_rgb, cam_obj, alpha=1.0, cam_name="")
+
+            info = _CAM_INFO[cam]
+            tile = _annotate_panel(tile, _short_cam(cam), _hex_to_bgr(info["color"]))
+            out[y:y + tile_h, x:x + tile_w] = tile
+        return out
+
+    grid_raw = _camera_grid(overlay_only=False)
+    grid_occ = _camera_grid(overlay_only=True)
+
+    # 左下直接走体素透视渲染引擎, 使用更高机位+更广FOV, 获得广视野俯视图.
+    topdown_wide = renderer.render_perspective_image(
+        heading_deg=0.0,
+        elev_deg=-72.0,
+        z_scale=2.0,
+        fov_deg=125.0,
+        ego_height_m=20.0,
+        eye_back_m=10.0,
+        width=max(half_w, 960),
+        height=max(bottom_h, 680),
+        bg_bgr=(255, 255, 255),
+    )
+    # Align with camera correspondence convention.
+    topdown_wide = _annotate_panel(
+        _fit_to_panel(topdown_wide, bottom_h, half_w, bg_color=(255, 255, 255)),
+        "Top-Down Wide View (renderer perspective)")
+
+    bev = renderer.render_bev_image(draw_helpers=True, scale=6)
+    bev = cv2.flip(bev, 1)
+    bev = _annotate_panel(_fit_to_panel(bev, bottom_h, half_w),
+                          "Bird's Eye View (BEV)")
+
+    x0 = margin
+    y0 = margin + title_h
+    canvas[y0:y0 + top_h, x0:x0 + half_w] = grid_raw
+    canvas[y0:y0 + top_h, x0 + half_w + gap:x0 + half_w + gap + half_w] = grid_occ
+
+    y1 = y0 + top_h + gap
+    canvas[y1:y1 + bottom_h, x0:x0 + half_w] = topdown_wide
+    canvas[y1:y1 + bottom_h, x0 + half_w + gap:x0 + half_w + gap + half_w] = bev
+
+    _save_cv2_image(save_path, canvas)
 
 
 def visualize_bev_diff_heatmap(occ_gt: np.ndarray, occ_pred: np.ndarray,
@@ -2627,7 +2874,19 @@ def main():
             scene_info=dataset.data_infos[args.sample_idx],
             save_path=combined_path,
             voxel_step=args.voxel_step,
-            title="FlashOCC — Input Cameras + 3D Occupancy Prediction",
+            title="FlashOCC - Input Cameras + 3D Occupancy Prediction",
+        )
+
+        # 生成海报风格 2×2 总览图
+        poster_path = build_output_path(args.out_dir, out_tag, "poster")
+        cam_params = _extract_cam_params_from_img_inputs(vis_in)
+        visualize_poster(
+            img_inputs=vis_in,
+            occ_pred=occ_pred,
+            cam_params=cam_params,
+            save_path=poster_path,
+            voxel_step=args.voxel_step,
+            title="FlashOCC - Poster Overview",
         )
 
         # 生成 BEV 差异热力图 (需要GT)
@@ -2637,7 +2896,7 @@ def main():
                 occ_gt=occ_gt,
                 occ_pred=occ_pred,
                 save_path=diff_path,
-                title="FlashOCC — BEV Prediction vs Ground Truth Difference",
+                title="FlashOCC - BEV Prediction vs Ground Truth Difference",
             )
 
     print("\n" + "=" * 65)

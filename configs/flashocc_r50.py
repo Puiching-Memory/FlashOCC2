@@ -77,6 +77,7 @@ bda_aug_conf = BDAAugConfig(
 # =====================================================================
 
 model = Lazy(BEVDetOCC,
+    use_depth_loss=False,       # 官方 BEVDetOCC 无 depth loss, 仅 BEVDepthOCC 才有
     img_backbone=Lazy(ResNet,
         depth=50,
         num_stages=4,

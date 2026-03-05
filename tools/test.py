@@ -322,9 +322,10 @@ def main():
 
         # ---- 从配置读取运行时优化参数 ----
         _setup_torch_runtime(exp)
-        amp_dtype = _get_amp_dtype(exp)
+        # 测试时禁用 AMP — 保证与官方 FP32 评估结果一致
+        amp_dtype = None
         logger.info(
-            f"运行时配置: AMP={exp.use_amp} (dtype={exp.amp_dtype}), "
+            f"运行时配置: AMP=disabled (test always FP32), "
             f"channels_last={exp.use_channels_last}, "
             f"compile=disabled (test), "
             f"cudnn_benchmark={exp.cudnn_benchmark}, "

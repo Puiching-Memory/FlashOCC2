@@ -77,7 +77,7 @@ def draw_ego_vehicle(
             color=color, linewidth=1.0, linestyle=":", alpha=0.7, zorder=zorder)
 
     # 车型标注
-    ax.text(cx + 2, cr, f"Renault Zoé\n{ZOE_LENGTH}m×{ZOE_WIDTH}m",
+    ax.text(cx + 2, cr, f"Renault Zoe\n{ZOE_LENGTH}m x {ZOE_WIDTH}m",
             fontsize=6, color=color, va="center",
             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color,
                       alpha=0.75, linewidth=0.5))
@@ -160,8 +160,8 @@ def add_bev_annotations(
     ax.set_xticklabels([f"{int(t)}" for t in ticks_m], fontsize=6)
     ax.set_yticks([(t - grid.pcr[0]) / vs for t in ticks_m])
     ax.set_yticklabels([f"{int(t)}" for t in ticks_m], fontsize=6)
-    ax.set_xlabel("Y / m  (right ← | → left )", fontsize=8)
-    ax.set_ylabel("X / m  (rear  ↓ | ↑  front)", fontsize=8)
+    ax.set_xlabel("Y / m  (right - | + left)", fontsize=8)
+    ax.set_ylabel("X / m  (rear - | + front)", fontsize=8)
 
     for t in ticks_m:
         ax.axvline((t - grid.pcr[1]) / vs, color="gray", lw=0.3, alpha=0.4)
@@ -170,8 +170,8 @@ def add_bev_annotations(
     cx, _ = grid.world_to_bev_px(0, 0)
     kw = dict(ha="center", fontsize=7, color="white", fontweight="bold",
               bbox=dict(boxstyle="round,pad=0.2", fc="#333", alpha=0.7))
-    ax.text(cx, grid.Dx - 2, "FRONT ▲", va="top", **kw)
-    ax.text(cx, 2, "REAR  ▼", va="bottom", **kw)
+    ax.text(cx, grid.Dx - 2, "FRONT", va="top", **kw)
+    ax.text(cx, 2, "REAR", va="bottom", **kw)
 
     if title:
         ax.set_title(title, fontsize=fontsize, fontweight="bold", pad=8)
@@ -191,6 +191,6 @@ def build_cam_legend_patches() -> list[Patch]:
     ]
     patches.append(
         Patch(facecolor="#1E90FF", alpha=0.35, edgecolor="#1E90FF",
-              label=f"Ego — Renault Zoé ({ZOE_LENGTH}m×{ZOE_WIDTH}m, wb={ZOE_WHEELBASE}m)")
+              label=f"Ego - Renault Zoe ({ZOE_LENGTH}m x {ZOE_WIDTH}m, wb={ZOE_WHEELBASE}m)")
     )
     return patches

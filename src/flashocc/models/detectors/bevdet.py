@@ -41,13 +41,19 @@ class BEVDet(MVXTwoStageDetector):
         x = x.view(B, N, output_dim, ouput_H, output_W)
         return x, stereo_feat
 
+    @torch.amp.autocast('cuda', enabled=False)
     def bev_encoder(self, x):
-        """
+        """BEV encoder — 强制 FP32 (与官方 @force_fp32 一致).
+
+        BEV 特征编码对数值精度敏感, 在 AMP 训练下也需保持 FP32
+        以避免小目标 IoU 下降.
+
         Args:
             x: (B, C, Dy, Dx)
         Returns:
             x: (B, C', 2*Dy, 2*Dx)
         """
+        x = x.float()
         x = self.img_bev_encoder_backbone(x)
         x = self.img_bev_encoder_neck(x)
         if hasattr(x, '__getitem__') and not hasattr(x, 'shape'):
@@ -89,6 +95,7 @@ class BEVDet(MVXTwoStageDetector):
             depth: (B*N, D, fH, fW)
         """
         img_inputs = self.prepare_inputs(img_inputs)
+        self._cached_sensor_inputs = img_inputs   # 缓存供子类 (sky freespace loss) 使用
         x, _ = self.image_encoder(img_inputs[0])    # x: (B, N, C, fH, fW)
         x, depth = self.img_view_transformer([x] + img_inputs[1:7])
         # x: (B, C, Dy, Dx)

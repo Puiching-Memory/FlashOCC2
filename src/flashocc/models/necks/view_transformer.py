@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from flashocc.core import BaseModule
 from flashocc.models import NECKS
 from flashocc.core.ops import bev_pool_v2
@@ -44,11 +45,13 @@ class LSSViewTransformer(BaseModule):
         accelerate=False,
         sid=False,
         collapse_z=True,
+        loss_depth_weight=1.0,
         init_cfg=None,
     ):
         super(LSSViewTransformer, self).__init__(init_cfg=init_cfg)
         self.grid_config = grid_config
         self.downsample = downsample
+        self.loss_depth_weight = loss_depth_weight
         self.create_grid_infos(grid_config)
         self.sid = sid
         self.frustum = self.create_frustum(grid_config.depth,
@@ -61,6 +64,7 @@ class LSSViewTransformer(BaseModule):
         self.initial_flag = True
         self.collapse_z = collapse_z
         self.pool_version = 'v3'   # 'v2' | 'v3' | 'v3_triton'
+        self._depth_digit = None   # 缓存 forward 中的 depth logits 供 depth loss 使用
 
     def create_grid_infos(self, grid_config):
         """Generate the grid information including the lower bound, interval,
@@ -462,8 +466,107 @@ class LSSViewTransformer(BaseModule):
         x = self.depth_net(x)
         depth_digit = x[:, :self.D, ...]    # (B*N, D, fH, fW)
         tran_feat = x[:, self.D:self.D + self.out_channels, ...]    # (B*N, C, fH, fW)
+
+        # 缓存 depth logits 供 get_depth_loss 使用 (避免对 softmax 输出做 BCE)
+        self._depth_digit = depth_digit
+
         depth = depth_digit.softmax(dim=1)
         return self.view_transform(input, depth, tran_feat)
+
+    def get_downsampled_gt_depth(self, gt_depths):
+        """将稀疏 LiDAR 深度真值下采样到特征图分辨率并转为 one-hot.
+
+        Args:
+            gt_depths: (B, N_views, img_H, img_W)  稀疏深度图, 0 表示无效
+        Returns:
+            gt_depths: (B*N_views*fH*fW, D) one-hot 编码
+        """
+        B, N, H, W = gt_depths.shape
+        # (B*N, fH, downsample, fW, downsample, 1)
+        gt_depths = gt_depths.view(
+            B * N,
+            H // self.downsample, self.downsample,
+            W // self.downsample, self.downsample,
+            1)
+        # (B*N, fH, fW, 1, downsample, downsample)
+        gt_depths = gt_depths.permute(0, 1, 3, 5, 2, 4).contiguous()
+        # (B*N*fH*fW, downsample*downsample)
+        gt_depths = gt_depths.view(-1, self.downsample * self.downsample)
+        # 取每个 patch 内最近的有效深度 (0 视为无效, 替换为 1e5)
+        gt_depths_tmp = torch.where(
+            gt_depths == 0.0,
+            1e5 * torch.ones_like(gt_depths),
+            gt_depths)
+        gt_depths = torch.min(gt_depths_tmp, dim=-1).values
+        # (B*N, fH, fW)
+        gt_depths = gt_depths.view(B * N, H // self.downsample, W // self.downsample)
+
+        if not self.sid:
+            gt_depths = (gt_depths - (self.grid_config.depth[0] -
+                                      self.grid_config.depth[2])) / \
+                        self.grid_config.depth[2]
+        else:
+            gt_depths = torch.log(gt_depths) - torch.log(
+                torch.tensor(self.grid_config.depth[0]).float())
+            gt_depths = gt_depths * (self.D - 1) / torch.log(
+                torch.tensor(self.grid_config.depth[1] - 1.).float() /
+                self.grid_config.depth[0])
+            gt_depths = gt_depths + 1.
+
+        gt_depths = torch.where(
+            (gt_depths < self.D + 1) & (gt_depths >= 0.0),
+            gt_depths, torch.zeros_like(gt_depths))      # (B*N, fH, fW)
+        gt_depths = F.one_hot(
+            gt_depths.long(), num_classes=self.D + 1).view(-1, self.D + 1)[:, 1:]  # (B*N*fH*fW, D)
+        return gt_depths.float()
+
+    @torch.amp.autocast('cuda', enabled=False)
+    def get_depth_loss(self, depth_labels, depth_preds):
+        """计算 LSS 深度预测的 Cross-Entropy Loss.
+
+        使用缓存的 depth logits + F.cross_entropy (内部 log_softmax + nll)
+        比 BCE on softmax 数值稳定得多, 避免 log(0) 导致 loss 爆炸.
+
+        Args:
+            depth_labels: (B, N_views, img_H, img_W)  稀疏 LiDAR 深度真值
+            depth_preds: (B*N_views, D, fH, fW)  softmax 后的深度分布 (未使用, 改用 logits)
+        Returns:
+            loss_depth: scalar tensor
+        """
+        depth_labels = self.get_downsampled_gt_depth(depth_labels)  # (B*N*fH*fW, D)
+
+        # 优先使用缓存的 raw logits (数值更稳定)
+        if self._depth_digit is not None:
+            # (B*N, D, fH, fW) -> (B*N*fH*fW, D)
+            depth_logits = self._depth_digit.permute(0, 2, 3, 1).contiguous().view(-1, self.D)
+        else:
+            # fallback: 使用 softmax 输出 + clamp + BCE
+            depth_logits = None
+
+        fg_mask = torch.max(depth_labels, dim=1).values > 0.0
+
+        if fg_mask.sum() == 0:
+            return depth_preds.sum() * 0.0  # 无有效像素, 返回 0
+
+        # 取出 GT 的 class index: one-hot -> argmax, 加 1 因为 class 0 是 "无深度"
+        # depth_labels 是 (N_total, D), fg rows 中恰好有一个 1
+        gt_class = depth_labels[fg_mask].argmax(dim=1)  # (N_fg,) 值域 [0, D-1]
+
+        with torch.amp.autocast('cuda', enabled=False):
+            if depth_logits is not None:
+                logits_fg = depth_logits[fg_mask].float()   # (N_fg, D)
+                depth_loss = F.cross_entropy(
+                    logits_fg, gt_class, reduction='mean')
+            else:
+                # fallback: BCE with clamp
+                depth_preds_flat = depth_preds.permute(0, 2, 3, 1).contiguous().view(-1, self.D)
+                preds_fg = depth_preds_flat[fg_mask].float().clamp(min=1e-4, max=1-1e-4)
+                labels_fg = depth_labels[fg_mask].float()
+                depth_loss = F.binary_cross_entropy(
+                    preds_fg, labels_fg, reduction='none',
+                ).sum() / fg_mask.sum().float()
+
+        return self.loss_depth_weight * depth_loss
 
     def get_mlp_input(self, rot, tran, intrin, post_rot, post_tran, bda):
         return None

@@ -516,3 +516,100 @@ class LoadOccGTFromFile(object):
 
         return results
 
+
+@PIPELINES.register
+class LoadSkyMask(object):
+    """加载 SAM3 离线生成的天空二值掩码.
+
+    SAM3 掩码目录结构与 nuScenes 的 samples/ 相同:
+        sky_mask_root/samples/CAM_XXX/<same_filename_stem>.png
+    掩码为 uint8 灰度图, 255=天空, 0=前景.
+
+    Args:
+        sky_mask_root (str): SAM3 掩码根目录, 例如 "data/SAM3".
+        downsample (int): 下采样倍率, 与 LSSViewTransformer 的 downsample 保持一致.
+            直接使用 nearest-neighbor resize 降低 mask 分辨率到特征图尺寸.
+    """
+
+    def __init__(self, sky_mask_root='data/SAM3', downsample=16,
+                 input_size=(256, 704)):
+        self.sky_mask_root = sky_mask_root
+        self.downsample = downsample
+        # 目标特征图尺寸 (固定, 与 LSSViewTransformer 一致)
+        self.feat_H = input_size[0] // downsample
+        self.feat_W = input_size[1] // downsample
+
+    def __call__(self, results):
+        from PIL import Image
+
+        cam_names = results.get('cam_names', [])
+        masks = []
+        for cam_name in cam_names:
+            cam_data = results['curr']['cams'][cam_name]
+            # 原始图像路径形如: data/nuScenes/samples/CAM_FRONT/xxx.jpg
+            orig_path = cam_data['data_path']
+            # 从路径中提取 samples/CAM_XXX/stem
+            parts = orig_path.replace('\\', '/').split('/')
+            # 找到 "samples" 在路径中的位置
+            try:
+                idx = parts.index('samples')
+            except ValueError:
+                idx = -3  # fallback
+            rel = '/'.join(parts[idx:])
+            # 替换后缀 .jpg -> .png
+            rel_png = os.path.splitext(rel)[0] + '.png'
+            mask_path = os.path.join(self.sky_mask_root, rel_png)
+
+            if os.path.exists(mask_path):
+                mask = Image.open(mask_path).convert('L')
+                mask_np = np.array(mask, dtype=np.float32) / 255.0   # 0.0 或 1.0
+            else:
+                # 如果没有对应的 mask，默认全部为前景 (不遮挡)
+                src_H, src_W = 900, 1600
+                mask_np = np.zeros((src_H, src_W), dtype=np.float32)
+
+            # 下采样到特征图分辨率
+            # 先应用与图像相同的增广参数 (resize + crop + flip)
+            # 这里我们对 mask 也做同样的空间变换
+            mask_tensor = torch.from_numpy(mask_np).unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
+
+            # 先 resize 到增广后 size, 再 crop
+            aug_params = results.get('img_aug_params', None)
+            if aug_params is not None and hasattr(aug_params, 'data'):
+                aug_params = aug_params.data
+            if aug_params is not None:
+                cam_idx = list(cam_names).index(cam_name)
+                resize_dims, crop, flip, rotate = aug_params[cam_idx]
+                resize_W, resize_H = resize_dims
+                # resize
+                mask_tensor = torch.nn.functional.interpolate(
+                    mask_tensor, size=(resize_H, resize_W), mode='bilinear',
+                    align_corners=False)
+                # crop (crop_w, crop_h, crop_w + fW, crop_h + fH)
+                cw, ch, cw2, ch2 = int(crop[0]), int(crop[1]), int(crop[2]), int(crop[3])
+                # clamp to valid range
+                ch = max(0, ch)
+                cw = max(0, cw)
+                ch2 = min(mask_tensor.shape[2], ch2)
+                cw2 = min(mask_tensor.shape[3], cw2)
+                mask_tensor = mask_tensor[:, :, ch:ch2, cw:cw2]
+                # flip
+                if flip:
+                    mask_tensor = torch.flip(mask_tensor, [-1])
+                # NOTE: rotation 对 binary mask 影响很小, 忽略以保持简洁
+
+            # 下采样到固定的特征图分辨率 (fH, fW)
+            mask_tensor = torch.nn.functional.interpolate(
+                mask_tensor, size=(self.feat_H, self.feat_W), mode='bilinear',
+                align_corners=False)
+            mask_tensor = (mask_tensor.squeeze(0).squeeze(0) > 0.5).float()  # (fH, fW)
+            masks.append(mask_tensor)
+
+        if masks:
+            sky_mask = torch.stack(masks, dim=0)  # (N_cams, fH, fW)
+        else:
+            sky_mask = torch.zeros(1, 1, 1)
+
+        results['sky_mask'] = sky_mask
+        return results
+

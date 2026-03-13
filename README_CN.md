@@ -1,14 +1,17 @@
 # FlashOCC v2.0
 
-基于 Channel-to-Height 插件的快速、高效 3D 占用预测。
-
-基于 [FlashOCC](https://arxiv.org/abs/2311.12058)、[Panoptic-FlashOCC](https://arxiv.org/pdf/2406.10527) 和 [UltimateDO](https://arxiv.org/abs/2409.11160)。
+FlashOCC的工程改进版本, 移除了mm系列的依赖, 支持最新torch和CUDA设备
 
 ## 特色
 
 - 修复了BGR颜色通道问题 https://github.com/HuangJunJie2017/BEVDet/issues/274
 - 新的BEV pool V3 支持 torch.compiled CUDA，显著提升性能
 - DAIL数据管道
+
+## 请求协助!
+
+目前我们尚无法复现FlashOCC_RestNet50的结果（mIoU 32.08）
+我们暂时没有开发精力调查原因, 如果你有任何发现, 请和我们分析, 提前感谢
 
 ## 快速开始
 

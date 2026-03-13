@@ -1,8 +1,18 @@
 # FlashOCC v2.0
 
-Fast and memory-efficient 3D occupancy prediction via Channel-to-Height plugin.
+An improved engineering version of FlashOCC, with mm-series dependencies removed, and support for the latest Torch and CUDA devices.
 
-Based on [FlashOCC](https://arxiv.org/abs/2311.12058), [Panoptic-FlashOCC](https://arxiv.org/pdf/2406.10527), and [UltimateDO](https://arxiv.org/abs/2409.11160).
+## Highlights
+
+- Fixed the BGR color channel issue: https://github.com/HuangJunJie2017/BEVDet/issues/274
+- New BEV Pool V3 supports torch.compile CUDA and significantly improves performance
+- DAIL data pipeline
+
+## Request For Help
+
+We are currently unable to reproduce the FlashOCC_ResNet50 result (mIoU 32.08).
+We do not have enough development bandwidth to investigate this for now.
+If you discover anything, we would greatly appreciate your analysis in advance.
 
 ## Quick Start
 
@@ -17,69 +27,69 @@ python tools/create_data_flashocc2.py
 # Train (single GPU)
 python tools/train.py configs/flashocc_r50.py
 
-# Train (multi-GPU)
+# Train (multi GPU)
 torchrun --nproc_per_node=4 tools/train.py configs/flashocc_r50.py
 
 # Test
 python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth --eval occ
 
-# Analyze dataset class distribution
+# Analyze class distribution in the dataset
 python tools/analyze_class_distribution.py data/flashocc2-nuscenes_infos_train.pkl --no-show
 ```
 
 ## Project Structure
 
-```
+```text
 FlashOCC/
 ├── configs/                  # Python config files
 │   └── flashocc_r50.py       # R50 single-frame config
-├── src/flashocc/             # Package source
-│   ├── constants.py          # Project-wide constants (classes, grid, etc.)
-│   ├── config/               # Config system (Lazy descriptors, dataclasses)
-│   ├── core/                 # Base infrastructure
-│   │   ├── base_module.py    # BaseModule with init_cfg support
-│   │   ├── checkpoint.py     # Checkpoint load/save
+├── src/flashocc/             # Source package
+│   ├── constants.py          # Global constants (class names, grid params, etc.)
+│   ├── config/               # Config system (Lazy descriptor, dataclasses)
+│   ├── core/                 # Core infrastructure
+│   │   ├── base_module.py    # BaseModule (supports init_cfg)
+│   │   ├── checkpoint.py     # Weight loading/saving
 │   │   ├── dist.py           # Distributed utilities
 │   │   ├── fp16.py           # Mixed precision (force_fp32, wrap_fp16_model)
 │   │   ├── functional.py     # multi_apply, reduce_mean
-│   │   ├── nn.py             # ConvModule, build_conv/norm_layer, init
+│   │   ├── nn.py             # ConvModule, build_conv/norm_layer, initialization
 │   │   ├── registry.py       # Registry pattern
-│   │   ├── bbox/             # 3D bounding box & point classes
+│   │   ├── bbox/             # 3D bounding boxes and point classes
 │   │   └── ops/              # CUDA ops (bev_pool_v2, bev_pool_v3)
-│   ├── datasets/             # Data loading & evaluation
+│   ├── datasets/             # Data loading and evaluation
 │   │   ├── base_dataset.py   # Custom3DDataset base class
-│   │   ├── nuscenes_occ.py   # NuScenesOccDataset (OCC evaluation)
-│   │   ├── nuscenes_bevdet.py# NuScenesDatasetBEVDet (detection eval)
+│   │   ├── nuscenes_occ.py   # NuScenesOccDataset (occupancy evaluation)
+│   │   ├── nuscenes_bevdet.py# NuScenesDatasetBEVDet (detection evaluation)
 │   │   ├── pipelines/        # Data transforms (loading, augmentation, formatting)
 │   │   └── evaluation/       # Metrics (mIoU, RayIoU, RayPQ)
-│   ├── engine/               # Training & inference
+│   ├── engine/               # Training and inference
 │   │   ├── trainer.py        # Training loop
-│   │   ├── tester.py         # Test loop
+│   │   ├── tester.py         # Testing loop
 │   │   ├── inference.py      # single_gpu_test
 │   │   ├── seed.py           # Random seed utilities
-│   │   ├── parallel.py       # DataParallel wrappers
+│   │   ├── parallel.py       # DataParallel wrapper
 │   │   └── hooks/            # Training hooks (EMA, SyncBN, etc.)
 │   └── models/               # Model definitions
 │       ├── backbones/        # ResNet, CustomResNet
 │       ├── necks/            # FPN, LSSFPN, ViewTransformer
 │       ├── heads/            # OccHead
-│       ├── detectors/        # BEVDet → BEVDetOCC pipeline
-│       └── losses/           # CrossEntropyLoss utilities
+│       ├── detectors/        # BEVDet -> BEVDetOCC pipeline
+│       └── losses/           # Cross-entropy loss utilities
 ├── tools/                    # CLI scripts
-│   ├── train.py              # Training entry point
-│   ├── test.py               # Testing entry point
+│   ├── train.py              # Training entry
+│   ├── test.py               # Testing entry
 │   ├── analyze_class_distribution.py  # Dataset class distribution analysis
-│   ├── dist_train.sh         # Multi-GPU training wrapper
-│   ├── dist_test.sh          # Multi-GPU testing wrapper
+│   ├── dist_train.sh         # Multi-GPU training script
+│   ├── dist_test.sh          # Multi-GPU testing script
 │   └── create_data_flashocc2.py # Data preparation
 ├── data/nuscenes/            # Dataset (not tracked by git)
-├── ckpts/                    # Pretrained weights
-└── pyproject.toml            # Dependencies & build config
+├── ckpts/                    # Pretrained checkpoints
+└── pyproject.toml            # Dependencies and build config
 ```
 
-## Config System
+## Configuration System
 
-Configs are pure Python files using `Lazy` descriptors and dataclasses — no YAML, no dict-based registries:
+Configuration files are pure Python files using Lazy descriptors and dataclasses, with no YAML and no dict-based registry:
 
 ```python
 # configs/flashocc_r50.py
@@ -98,23 +108,23 @@ experiment = Experiment(
 )
 ```
 
-All model components are imported directly — IDE navigation, refactoring, and type-checking work out of the box.
+All model components are referenced directly through Python imports, so IDE navigation, refactoring, and type checking work out of the box.
 
-## Metrics
+## Performance
 
-| Model                   | Backbone | Input    | mIoU  | Params  |
-| ----------------------- | -------- | -------- | ----- | ------- |
-| FlashOCC M1 (1f)        | R50      | 256×704  | 32.08 | 44.74M  |
-| FlashOCC-4D-Stereo (2f) | R50      | 256×704  | 37.84 | -       |
-| FlashOCC-4D-Stereo (2f) | Swin-B   | 512×1408 | 43.52 | 144.99M |
+| Model                    | Backbone | Input Size | mIoU  | Params  |
+| ------------------------ | -------- | ---------- | ----- | ------- |
+| FlashOCC M1 (1f)         | R50      | 256×704    | 32.08 | 44.74M  |
+| FlashOCC-4D-Stereo (2f)  | R50      | 256×704    | 37.84 | -       |
+| FlashOCC-4D-Stereo (2f)  | Swin-B   | 512×1408   | 43.52 | 144.99M |
 
 ## Documentation
 
-- [Installation](doc/install.md)
-- [Architecture](doc/architecture.md)
+- [Installation Guide](doc/install.md)
+- [Project Architecture](doc/architecture.md)
 - [NuScenes Data Preparation](doc/nuscenes_data.md)
-- [Training](doc/training.md)
-- [Testing](doc/testing.md)
+- [Training Guide](doc/training.md)
+- [Testing Guide](doc/testing.md)
 
 ## Citation
 
@@ -143,6 +153,6 @@ All model components are imported directly — IDE navigation, refactoring, and 
 }
 ```
 
-## Acknowledgement
+## Acknowledgements
 
 Based on [BEVDet](https://github.com/HuangJunJie2017/BEVDet), [FB-BEV](https://github.com/NVlabs/FB-BEV.git), [RenderOcc](https://github.com/pmj110119/RenderOcc.git), and [SparseBEV](https://github.com/MCG-NJU/SparseBEV.git).

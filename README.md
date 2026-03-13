@@ -1,51 +1,51 @@
 # FlashOCC v2.0
 
-An improved engineering version of FlashOCC, with mm-series dependencies removed, and support for the latest Torch and CUDA devices.
+An improved engineering version of FlashOCC, removing `mmcv`/`mmdet3d` dependencies, supporting the latest torch and CUDA devices.
 
-## Highlights
+## Features
 
-- Fixed the BGR color channel issue: https://github.com/HuangJunJie2017/BEVDet/issues/274
-- New BEV Pool V3 supports torch.compile CUDA and significantly improves performance
-- DAIL data pipeline
+- Fixed BGR color channel issue: [HuangJunJie2017/BEVDet#274](https://github.com/HuangJunJie2017/BEVDet/issues/274)
+- New BEV Pool V3 with `torch.compile` support, significantly improving performance.
+- DAIL data pipeline.
 
-## Request For Help
+## Request for Assistance!
 
-We are currently unable to reproduce the FlashOCC_ResNet50 result (mIoU 32.08).
-We do not have enough development bandwidth to investigate this for now.
-If you discover anything, we would greatly appreciate your analysis in advance.
+Currently, we are unable to reproduce the FlashOCC_ResNet50 results (mIoU 32.08). We haven't had the bandwidth to investigate the cause yet. If you have any findings, please share them with us. Thank you in advance!
+
+Note: [@Yzichen](https://github.com/Yzichen) is not involved in the maintenance of this project. His name appears due to early forks and compressed commit history, but this does not diminish his original contributions!
 
 ## Quick Start
 
 ```bash
-# Install
+# Installation
 uv venv .venv --python 3.12 && source .venv/bin/activate
 uv sync
 
-# Prepare data (see doc/nuscenes_data.md)
+# Prepare Data (see doc/nuscenes_data.md)
 python tools/create_data_flashocc2.py
 
-# Train (single GPU)
+# Training (Single GPU)
 python tools/train.py configs/flashocc_r50.py
 
-# Train (multi GPU)
+# Training (Multi-GPU)
 torchrun --nproc_per_node=4 tools/train.py configs/flashocc_r50.py
 
-# Test
+# Testing
 python tools/test.py configs/flashocc_r50.py work_dirs/flashocc_r50/epoch_24.pth --eval occ
 
-# Analyze class distribution in the dataset
+# Dataset Class Distribution Statistics
 python tools/analyze_class_distribution.py data/flashocc2-nuscenes_infos_train.pkl --no-show
 ```
 
 ## Project Structure
 
-```text
+```
 FlashOCC/
-├── configs/                  # Python config files
-│   └── flashocc_r50.py       # R50 single-frame config
-├── src/flashocc/             # Source package
-│   ├── constants.py          # Global constants (class names, grid params, etc.)
-│   ├── config/               # Config system (Lazy descriptor, dataclasses)
+├── configs/                  # Python configuration files
+│   └── flashocc_r50.py       # R50 single-frame configuration
+├── src/flashocc/             # Source code package
+│   ├── constants.py          # Global constants (class names, grid parameters, etc.)
+│   ├── config/               # Configuration system (Lazy descriptors, data classes)
 │   ├── core/                 # Core infrastructure
 │   │   ├── base_module.py    # BaseModule (supports init_cfg)
 │   │   ├── checkpoint.py     # Weight loading/saving
@@ -54,42 +54,42 @@ FlashOCC/
 │   │   ├── functional.py     # multi_apply, reduce_mean
 │   │   ├── nn.py             # ConvModule, build_conv/norm_layer, initialization
 │   │   ├── registry.py       # Registry pattern
-│   │   ├── bbox/             # 3D bounding boxes and point classes
-│   │   └── ops/              # CUDA ops (bev_pool_v2, bev_pool_v3)
+│   │   ├── bbox/             # 3D bounding boxes & point classes
+│   │   └── ops/              # CUDA operators (bev_pool_v2, bev_pool_v3)
 │   ├── datasets/             # Data loading and evaluation
 │   │   ├── base_dataset.py   # Custom3DDataset base class
 │   │   ├── nuscenes_occ.py   # NuScenesOccDataset (occupancy evaluation)
 │   │   ├── nuscenes_bevdet.py# NuScenesDatasetBEVDet (detection evaluation)
-│   │   ├── pipelines/        # Data transforms (loading, augmentation, formatting)
-│   │   └── evaluation/       # Metrics (mIoU, RayIoU, RayPQ)
+│   │   ├── pipelines/        # Data pipelines (loading, augmentation, formatting)
+│   │   └── evaluation/       # Evaluation metrics (mIoU, RayIoU, RayPQ)
 │   ├── engine/               # Training and inference
 │   │   ├── trainer.py        # Training loop
 │   │   ├── tester.py         # Testing loop
 │   │   ├── inference.py      # single_gpu_test
-│   │   ├── seed.py           # Random seed utilities
+│   │   ├── seed.py           # Seed utilities
 │   │   ├── parallel.py       # DataParallel wrapper
 │   │   └── hooks/            # Training hooks (EMA, SyncBN, etc.)
 │   └── models/               # Model definitions
 │       ├── backbones/        # ResNet, CustomResNet
 │       ├── necks/            # FPN, LSSFPN, ViewTransformer
 │       ├── heads/            # OccHead
-│       ├── detectors/        # BEVDet -> BEVDetOCC pipeline
+│       ├── detectors/        # BEVDet → BEVDetOCC pipeline
 │       └── losses/           # Cross-entropy loss utilities
-├── tools/                    # CLI scripts
-│   ├── train.py              # Training entry
-│   ├── test.py               # Testing entry
-│   ├── analyze_class_distribution.py  # Dataset class distribution analysis
+├── tools/                    # Command-line scripts
+│   ├── train.py              # Training entry point
+│   ├── test.py               # Testing entry point
+│   ├── analyze_class_distribution.py  # Class distribution analysis
 │   ├── dist_train.sh         # Multi-GPU training script
 │   ├── dist_test.sh          # Multi-GPU testing script
 │   └── create_data_flashocc2.py # Data preparation
 ├── data/nuscenes/            # Dataset (not tracked by git)
-├── ckpts/                    # Pretrained checkpoints
-└── pyproject.toml            # Dependencies and build config
+├── ckpts/                    # Pre-trained weights
+└── pyproject.toml            # Dependencies and build configuration
 ```
 
 ## Configuration System
 
-Configuration files are pure Python files using Lazy descriptors and dataclasses, with no YAML and no dict-based registry:
+Configuration files are pure Python, using `Lazy` descriptors and data classes—no YAML, no dictionary-based registries:
 
 ```python
 # configs/flashocc_r50.py
@@ -108,15 +108,15 @@ experiment = Experiment(
 )
 ```
 
-All model components are referenced directly through Python imports, so IDE navigation, refactoring, and type checking work out of the box.
+All model components are referenced via Python `import` directly—IDE navigation, refactoring, and type checking work out of the box.
 
-## Performance
+## Benchmarks
 
-| Model                    | Backbone | Input Size | mIoU  | Params  |
-| ------------------------ | -------- | ---------- | ----- | ------- |
-| FlashOCC M1 (1f)         | R50      | 256×704    | 32.08 | 44.74M  |
-| FlashOCC-4D-Stereo (2f)  | R50      | 256×704    | 37.84 | -       |
-| FlashOCC-4D-Stereo (2f)  | Swin-B   | 512×1408   | 43.52 | 144.99M |
+| Model                   | Backbone | Input Size | mIoU  | Parameters |
+| ----------------------- | -------- | ---------- | ----- | ---------- |
+| FlashOCC M1 (1f)        | R50      | 256×704    | 32.08 | 44.74M     |
+| FlashOCC-4D-Stereo (2f) | R50      | 256×704    | 37.84 | -          |
+| FlashOCC-4D-Stereo (2f) | Swin-B   | 512×1408   | 43.52 | 144.99M    |
 
 ## Documentation
 

@@ -2,8 +2,8 @@
 
 ## 系统要求
 
-- **Python**: >= 3.10
-- **PyTorch**: >= 2.5 (CUDA 12.8)
+- **Python**: >= 3.11, < 3.14 (Pillow 13 requires Python 3.11+)
+- **PyTorch**: >= 2.13 (CUDA 12.6)
 - **GPU**: NVIDIA GPU (推荐 A100 / 4090)
 - **操作系统**: Ubuntu 22.04+
 
@@ -28,7 +28,7 @@ conda activate flashocc
 uv sync
 
 # 或手动安装
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -e .
 ```
 
@@ -85,8 +85,9 @@ FlashOCC/
 
 | 包              | 版本要求 | 用途                    |
 | --------------- | -------- | ----------------------- |
-| torch           | >= 2.5   | 深度学习框架            |
-| torchvision     | >= 0.20  | 图像处理、ResNet 预训练 |
+| torch           | >= 2.13  | 深度学习框架            |
+| torchvision     | >= 0.28  | 图像处理、ResNet 预训练 |
+| pillow          | >= 13.0  | 图像解码与安全修复       |
 | nuscenes-devkit | >= 1.2.0 | NuScenes 数据集 API     |
 | numpy           | >= 1.26  | 数值计算                |
 | timm            | >= 1.0   | 模型组件                |

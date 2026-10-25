@@ -1,0 +1,48 @@
+name: Dependency security regression
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/dependency-security.yml
+      - pyproject.toml
+      - uv.lock
+      - tests/test_dependency_security.py
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/dependency-security.yml
+      - pyproject.toml
+      - uv.lock
+      - tests/test_dependency_security.py
+
+permissions:
+  contents: read
+
+jobs:
+  trust-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+      - name: Select the locked versions required by the regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+          packages = tomllib.loads(Path('uv.lock').read_text())['package']
+          versions = {p['name']: p['version'] for p in packages if 'version' in p}
+          Path('torch-test.txt').write_text('torch==' + versions['torch'].split('+')[0] + '\n')
+          Path('security-test.txt').write_text('\n'.join(
+              name + '==' + versions[name] for name in ('pillow', 'transformers')
+          ) + '\n')
+          PY
+      - name: Install CPU dependencies for the trust boundary test
+        run: |
+          uv venv --python 3.12
+          uv pip install -r torch-test.txt --index-url https://download.pytorch.org/whl/cpu
+          uv pip install -r security-test.txt
+      - name: Refusing remote code must prevent downloads
+        run: .venv/bin/python -m unittest discover -s tests -v

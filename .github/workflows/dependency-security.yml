@@ -8,7 +8,7 @@ on:
       - uv.lock
       - tests/test_dependency_security.py
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - .github/workflows/dependency-security.yml
       - pyproject.toml

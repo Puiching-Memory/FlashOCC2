@@ -2,12 +2,12 @@
 name = "flashocc"
 version = "2.0.0"
 description = "FlashOCC: Fast and Memory-Efficient Occupancy Prediction via Channel-to-Height Plugin"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "torch>=2.5",
-    "torchvision>=0.20",
+    "torch>=2.13",
+    "torchvision>=0.28",
     "numpy>=1.26",
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     "nuscenes-devkit>=1.2.0",
     "pyquaternion>=0.9.9",
     "tqdm>=4.67",
@@ -26,11 +26,11 @@ dependencies = [
     "matplotlib>=3.8",
     "ultralytics-thop",
     "swanlab",
-    "transformers"
+    "transformers>=5.20.2"
 ]
 
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -38,10 +38,10 @@ where = ["src"]
 include = ["flashocc*"]
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
